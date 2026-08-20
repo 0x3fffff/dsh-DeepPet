@@ -1,0 +1,25 @@
+{
+  "name": "dsh-DeepPet",
+  "version": "0.1.0",
+  "description": "DSH 桌宠插件：任务完成气泡/音效、鼠标拖动跑步动画、双击查询 API 余额",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml"
+  ],
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "ws": "^8.18.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.7"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "dsh-DeepPet-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node test/plugin-smoke.mjs"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
+  }
+}

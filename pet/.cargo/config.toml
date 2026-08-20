@@ -1,0 +1,10 @@
+# 使用 rsproxy.cn 镜像加速 crates.io（国内网络下显著提速）。
+# 仅影响本项目；如需全局生效，把相同内容放到 %USERPROFILE%\.cargo\config.toml。
+[source.crates-io]
+replace-with = "rsproxy-sparse"
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[net]
+git-fetch-with-cli = true
