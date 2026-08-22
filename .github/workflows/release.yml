@@ -1,0 +1,88 @@
+# 发版：编译各平台桌宠二进制 → 先发平台包，再发插件包。
+# 顺序不能反：插件对平台包是精确 pin，平台包必须先在 registry 上。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: windows-latest
+            pkg: win32-x64
+            bin: dsh-deep-pet.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pet/src-tauri
+      # 版本漂移会让每个用户都收到假的握手警告；DSH 契约漂移会让成败判别
+      # 失效。两者发版前都必须先挡住（npm test 同时覆盖这两项）。
+      - name: install workspace deps
+        run: pnpm install --frozen-lockfile
+      - name: test
+        run: npm test
+      - name: build pet binary
+        working-directory: pet
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm tauri build --no-bundle
+      - name: stage binary
+        run: node scripts/stage-binary.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pet-${{ matrix.pkg }}
+          path: packages/${{ matrix.pkg }}/bin/${{ matrix.bin }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: place binaries
+        run: |
+          mkdir -p packages/win32-x64/bin
+          cp artifacts/pet-win32-x64/dsh-deep-pet.exe packages/win32-x64/bin/
+      - name: check versions
+        run: node scripts/check-versions.mjs
+      # tag 与 package.json 不符就停，避免发出版本号对不上的包。
+      - name: check tag matches version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./plugin/package.json').version")"
+          test "$tag" = "$pkg" || { echo "tag $tag != version $pkg"; exit 1; }
+      - name: publish platform packages
+        working-directory: packages/win32-x64
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish plugin
+        working-directory: plugin
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

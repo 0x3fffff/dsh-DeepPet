@@ -1,11 +1,11 @@
-# dsh-DeepPet host bundle：插入 deep-pet 插件行。
+# dsh-deep-pet host bundle：插入 deep-pet 插件行。
 - insert:
     - id: deep-pet
-      name: 'dsh-DeepPet'
+      name: 'dsh-deep-pet'
       config:
         enabled: true
         apiKeyEnv: DEEPSEEK_API_KEY
         balanceBaseUrl: https://api.deepseek.com
         petBinary: ''
-        petDownloadUrl: ''
-        bubbleMs: 5000
+        # 一只桌宠服务多个 profile 时用来区分来源；留空则气泡不加前缀。
+        label: ''

@@ -1,0 +1,17 @@
+# pnpm 自动生成。这里没有 packages: 键，所以它只是配置、不构成工作区——
+# plugin/ 和 pet/ 各自独立安装（pnpm root 已确认三者互不干扰）。
+# minimumReleaseAgeExclude 是为了放行刚发布不久的 DSH rc 包，
+# 否则 pnpm 的 minimumReleaseAge 策略会拒绝安装它们。
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-agent@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-attachment@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-brand@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-invariants@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-llm@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-scope@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-session-projection@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-session-title@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-session@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-system-prompt@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-timeout@0.1.1-rc.2'
+  - '@deepseek-ai/dsh-typert-protocol@0.1.1-rc.2'

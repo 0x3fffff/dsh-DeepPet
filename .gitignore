@@ -4,3 +4,9 @@ target/
 *.log
 .DS_Store
 pet/icon-source.png
+
+# 桌宠二进制由 CI 在发版时填入，不进 git
+packages/*/bin/
+
+# pet/public 由 scripts/build-assets.mjs 按清单从 assets/ 装配，是产物
+pet/public/

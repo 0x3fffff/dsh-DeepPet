@@ -1,3 +1,5 @@
+@import "./bubble.css";
+
 html,
 body {
   margin: 0;
@@ -35,39 +37,16 @@ body {
   left: 50%;
   width: max-content;
   max-width: 180px;
-  box-sizing: border-box;
-  padding: 8px 14px;
-  background: rgba(255, 255, 255, 0.95);
-  color: #333;
-  border-radius: 16px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
-  font: 13px/1.5 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  word-break: break-word;
-  white-space: normal;
-  text-align: center;
   z-index: 10;
   opacity: 0;
-  transform: translateX(-50%) translateY(4px) scale(0.96);
+  transform: translateX(-50%) rotate(var(--tilt)) translateY(4px) scale(0.96);
   transition: opacity 0.18s ease, transform 0.18s ease;
   pointer-events: none;
 }
 
 #bubble.show {
   opacity: 1;
-  transform: translateX(-50%) translateY(0) scale(1);
-}
-
-#bubble::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -5px;
-  width: 12px;
-  height: 12px;
-  margin-left: -6px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 0 0 3px 0;
-  transform: rotate(45deg);
+  transform: translateX(-50%) rotate(var(--tilt)) translateY(0) scale(1);
 }
 
 #menu {

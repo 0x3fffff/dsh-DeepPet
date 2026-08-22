@@ -1,12 +1,22 @@
 {
-  "name": "dsh-DeepPet-workspace",
+  "name": "dsh-deep-pet-workspace",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "node test/plugin-smoke.mjs"
+    "check-versions": "node scripts/check-versions.mjs",
+    "stage": "node scripts/stage-binary.mjs",
+    "test": "node scripts/check-versions.mjs && node test/contract.mjs && node test/plugin-smoke.mjs && node test/handshake.mjs",
+    "test:integration": "node test/integration-smoke.mjs",
+    "test:clickthrough": "node test/clickthrough.mjs",
+    "test:orphan": "node test/orphan.mjs",
+    "test:rendezvous": "node test/rendezvous.mjs",
+    "build-assets": "node scripts/build-assets.mjs",
+    "build-animation": "node scripts/build-animation.mjs"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-agent": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-session-title": "0.1.1-rc.2",
     "ws": "^8.18.0"
   }
 }

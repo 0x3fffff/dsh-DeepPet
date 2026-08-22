@@ -1,0 +1,76 @@
+@import "./bubble.css";
+
+:root {
+  color-scheme: light;
+  --page-fg: #1f2430;
+  --page-muted: #6b7280;
+  --page-line: #e3e6ec;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #f7f8fa;
+  color: var(--page-fg);
+  font: 14px/1.6 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.page { padding: 18px 20px 28px; }
+
+section { padding: 14px 0; border-bottom: 1px solid var(--page-line); }
+section:last-of-type { border-bottom: 0; }
+
+h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--page-muted); letter-spacing: .04em; }
+
+.row { display: flex; align-items: center; gap: 12px; }
+
+/* 样式选择器。每张卡片里是一个真实的 .bubble——预览和桌宠上看到的是同一套
+   CSS 规则，不是另画一份近似品。 */
+.styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+
+.card {
+  position: relative;
+  padding: 22px 8px 20px;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+  /* 玻璃样式是半透明的，平铺纯色背景就看不出它透不透——给个有明暗变化的
+     底衬，让透明度真的可见。 */
+  background:
+    linear-gradient(135deg, #5b6b8c 0%, #8ea3c4 40%, #c9d3e4 70%, #6f7f9e 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+.card:hover { border-color: rgba(60, 90, 160, .45); }
+.card[aria-selected="true"] { border-color: #3d6ae0; box-shadow: 0 0 0 3px rgba(61,106,224,.22); }
+
+.card .bubble { max-width: 100px; font-size: 12px; }
+.card .name {
+  font-size: 12px;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,.55);
+}
+
+input[type="range"] { flex: 1; }
+output { min-width: 56px; text-align: right; font-variant-numeric: tabular-nums; color: var(--page-muted); }
+
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+button {
+  padding: 7px 14px;
+  border: 1px solid #ccd2dd;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--page-fg);
+  font: inherit;
+  cursor: pointer;
+}
+button:hover { background: #eef1f6; }
+button.danger { color: #b4232a; border-color: #e3bfc1; }
+button.danger:hover { background: #fdeced; }
+
+.hint { margin: 8px 0 0; font-size: 12px; color: var(--page-muted); }
+.status { margin: 14px 0 0; min-height: 18px; font-size: 12px; color: var(--page-muted); }

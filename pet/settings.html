@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>dsh-deep-pet 设置</title>
+    <link rel="stylesheet" href="/src/settings.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section>
+        <h2>气泡样式</h2>
+        <div id="styles" class="styles"></div>
+      </section>
+
+      <section>
+        <h2>气泡时长</h2>
+        <div class="row">
+          <input type="range" id="bubbleMs" min="2000" max="15000" step="500" />
+          <output id="bubbleMsLabel"></output>
+        </div>
+        <p class="hint">完成动画会按这个时长自适应播放速度，始终完整播完。</p>
+      </section>
+
+      <section>
+        <h2>音效</h2>
+        <label class="check"><input type="checkbox" id="sound" /> 任务完成时播放音效</label>
+      </section>
+
+      <section>
+        <h2>操作</h2>
+        <div class="row">
+          <button id="resetPos">重置桌宠位置</button>
+          <button id="quit" class="danger">退出桌宠</button>
+        </div>
+        <p class="hint">桌宠被拖到已拔掉的显示器上找不回来时，用「重置位置」把它叫回主屏右下角。</p>
+      </section>
+
+      <p id="status" class="status"></p>
+    </main>
+    <script type="module" src="/src/settings.ts"></script>
+  </body>
+</html>
