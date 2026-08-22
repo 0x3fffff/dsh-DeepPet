@@ -78,6 +78,14 @@ function apply(ctx, config) {
   // 本轮运行期间出过 agent/error 的 agent id。agent/status 只有
   // 'idle' | 'running' 两个值，分不出成败——这个集合就是那个判别器。
   const failed = new Set();
+  // 本轮被「终止」的 agent id。取消**不发 agent/error**——DSH 把它记在
+  // session 日志的 turn/end 上（reason.kind === 'aborted'）。少了这一路，
+  // 用户在网页端点「终止对话」会被当成任务完成来庆祝（已实测）。
+  const canceled = new Set();
+  // 被非用户原因中止的 agent id（`parent`：子 agent 被上级撤销；`disposed`：
+  // agent 正在销毁，通常 DSH 本来就在退出）。这些**完全不播报**——落到
+  // 「完成」分支会变成关 DSH 时闪一下庆祝，比播报还糟。
+  const suppressed = new Set();
   const helloTimers = new Set();
   let child = null;
   let regFile = null;
@@ -130,6 +138,32 @@ function apply(ctx, config) {
     ws.on("error", drop);
   });
 
+  /**
+   * 从 session 日志里读 turn 的收尾原因。
+   *
+   * `agent/error` 仍然要留着，不是被这个替代：它的契约写明会报告失败
+   * 「即使该错误在 turn 内没有位置、没有持久记录」——也就是有些失败压根
+   * 不产生 turn/end。两者互补。
+   */
+  ctx.on("session/event", (session, event) => {
+    if (event?.type !== "turn/end") return;
+    const id = session?.id;
+    const reason = event.data?.reason;
+    const kind = reason?.kind;
+    const cause = reason?.reason?.kind; // 仅 aborted 有
+    if (config.logEvents) {
+      log(`deep-pet: turn/end id=${id} reason=${kind}${cause ? `/${cause}` : ""}`);
+    }
+    if (id === undefined) return;
+    if (kind === "error") { failed.add(id); return; }
+    if (kind !== "aborted") return;
+    // 只有用户和插件发起的终止值得播报。`parent` 是子 agent 被上级撤销，
+    // `disposed` 是 agent 正在销毁（通常 DSH 本来就在退出）——都不是用户的
+    // 动作，播报纯属噪音。
+    if (cause === "user" || cause === "hook") canceled.add(id);
+    else suppressed.add(id);
+  });
+
   ctx.on("agent/error", ({ agent }) => {
     if (config.logEvents) log(`deep-pet: agent/error id=${agent?.id}`);
     if (agent?.id !== undefined) failed.add(agent.id);
@@ -140,6 +174,8 @@ function apply(ctx, config) {
     if (config.logEvents) log(`deep-pet: agent/disposed id=${agent?.id}`);
     prevStatus.delete(agent?.id);
     failed.delete(agent?.id);
+    canceled.delete(agent?.id);
+    suppressed.delete(agent?.id);
   });
 
   // 一次完整 agent 运行结束（running -> idle）触发一次气泡。
@@ -149,20 +185,27 @@ function apply(ctx, config) {
     const prev = prevStatus.get(id);
     prevStatus.set(id, status);
     if (status === "running") {
-      failed.delete(id); // 新一轮开始，清掉上一轮的失败标记
+      // 新一轮开始，清掉上一轮的判定痕迹
+      failed.delete(id);
+      canceled.delete(id);
+      suppressed.delete(id);
       return;
     }
     if (prev !== "running") return;
-    // 未验证的假设：用户主动取消（Ctrl+C）是否也走 agent/error 尚未在真实
-    // DSH 上确认过。Agent.cancel() 的文档没有提对应事件——若它其实什么都不
-    // 发，取消仍会被当成成功。用 logEvents: true 跑一次 DSH 按 Ctrl+C 即可确认。
-    const hadError = failed.delete(id); // 无论是否顶层都要清，否则标记会残留
+    // 优先级：出错 > 已终止 > 完成。错误是必须看到的；用户自己触发的终止
+    // 压过庆祝，但不该压过失败。两个 delete 无论是否顶层都要执行，否则
+    // 标记会残留到下一轮。
+    const hadError = failed.delete(id);
+    const wasCanceled = canceled.delete(id);
+    const wasSuppressed = suppressed.delete(id);
     // 只庆祝顶层 agent。子 agent 同样会发 agent/status——一个任务内部派三个
     // 子 agent 就会庆祝四次。取不到 agents 服务时宁可多报也不漏报。
     let isRoot = true;
     try { isRoot = ctx.agents.roots().some((a) => a.id === id); } catch {}
     if (!isRoot) return;
-    const outcome = hadError ? "error" : "success";
+    // 出错优先于抑制：DSH 退出途中真出了错，仍然要让用户看到。
+    if (!hadError && !wasCanceled && wasSuppressed) return;
+    const outcome = hadError ? "error" : wasCanceled ? "canceled" : "success";
     let title;
     try { title = ctx.sessionTitle.get(agent.session)?.title; } catch { title = undefined; }
     // 标题在「产生足够输入」之前是 undefined（见 sessionTitle.get 的契约），

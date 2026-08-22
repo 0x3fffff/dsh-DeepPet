@@ -5,7 +5,8 @@
 - **拖动**：按下并左右拖动时播放 8 帧跑步动画，水平方向决定朝向（左=原帧朝左，右=水平镜像朝右；纯垂直拖动按朝左），松手停在原地并记住位置。
 - **空闲**：显示 `平常.webp`（永远朝左，不镜像）。
 - **任务完成**：DSH 一次**顶层** agent 运行结束时，播一段 78 帧的完成动画 + 气泡「{对话名称}」完成 + 播放 `任务完成.mp3`，随后回到空闲。会话还没生成标题时气泡退化成「任务完成」。
-- **任务出错**：该轮运行期间出过 `agent/error` 时，中断完成动画、改摆 `晕.webp` + 气泡「{对话名称}」出错了，**不播音效**（只有一个「任务完成」音效，失败时放它是错的）。
+- **任务出错**：该轮出过错时，中断完成动画、改摆 `晕.webp` + 气泡「{对话名称}」出错了，**不播音效**（只有一个「任务完成」音效，失败时放它是错的）。
+- **任务终止**：你点了「终止对话」时，摆 `坐下.webp` + 气泡「{对话名称}」已终止，同样不播音效。既不庆祝也不当成错误——是你自己按的。
 - **双击**：气泡显示当前 DeepSeek API 余额（`余额 ¥X.XX`），失败时显示原因。
 - **右键**：弹出菜单，「设置」打开独立的设置窗口（气泡样式 / 气泡时长 / 音效 / 重置位置 / 退出桌宠）。
 - **单击**：无操作。
@@ -68,15 +69,37 @@ dsh-DeepPet/
 `node test/rendezvous.mjs` 用真实二进制验证这三条：单例、一只桌宠连两个插件、
 登记清空后立刻关窗。
 
-### 怎么分辨任务是成了还是砸了
+### 怎么分辨任务是成了、砸了、还是被你叫停了
 
 `AgentStatus` 只有 `idle` 和 `running` 两个值，所以 running→idle 这条边**在原理上
-就分不出**「正常完成」「报错」「用户取消」——单看它，Ctrl+C 打断也会让桌宠比耶。
+就分不出**这三者。判别器要从两个地方凑：
 
-判别器是另一个事件：插件按 agent id 记录本轮有没有收到过 `agent/error`，
-在 running→idle 时据此发 `outcome: "success" | "error"`。`running` 到来时清掉
-上一轮的标记，`agent/disposed` 时连同 `prevStatus` 一起删除（否则这两个容器
-会随会话数无界增长）。
+**`agent/error`**（Cordis 事件）——它的契约写明会报告失败「即使该错误在 turn 内
+没有位置、没有持久记录」，也就是有些失败**压根不产生 `turn/end`**。
+
+**`turn/end`**（session 日志事件，经 `ctx.on('session/event', (session, event) => …)`
+观察）——`event.data.reason` 是个带判别标签的和类型：
+
+| `reason.kind` | 含义 | 桌宠 |
+|---|---|---|
+| `completed` / `max-tokens` / `blocked` / `interrupted` | 正常收尾 | 完成 |
+| `error` | turn 失败 | 出错 |
+| `aborted` + `reason.kind: 'user' \| 'hook'` | 你或某个插件终止了它 | **已终止** |
+| `aborted` + `reason.kind: 'parent' \| 'disposed'` | 上级撤销 / agent 正在销毁 | **完全不播报** |
+
+**取消不发 `agent/error`**——这一条是在真实 DSH 上实测出来的：在网页端点「终止
+对话」，桌宠会比耶庆祝。DSH 自己也知道这个坑，`consumed-work` 模块开头就写着
+「一个还没进入第一步就停下的 turn，其 `turn/end` 和空操作 turn 长得一模一样」。
+
+`parent` / `disposed` 必须是**完全不播报**，而不是「不算终止」——后者会落进
+「完成」分支，变成关 DSH 时闪一下庆祝，比播报还糟。唯一的例外是同一轮里真出了
+错：**出错优先于抑制**，DSH 退出途中的失败仍然要让用户看到。
+
+优先级 **出错 > 已终止 > 完成**。三个标记都在 `running` 到来时清空，
+`agent/disposed` 时连同 `prevStatus` 一起删除（否则这些容器会随会话数无界增长）。
+
+把 `logEvents` 打开会把每条 `turn/end` 的 `reason`（含 `aborted` 的 cause）打进
+DSH 日志，用来核对分类。
 
 ### 只庆祝顶层 agent
 
@@ -96,22 +119,19 @@ dsh-DeepPet/
 时，旧的那个会在新气泡还挂着的时候触发，**立绘提前变回平常而文字还在**。现在
 用自增的播报代次号，只有最新一次排的定时器生效。
 
-**一处尚未验证的假设**：用户主动取消（Ctrl+C）时 DSH 到底发不发 `agent/error`。
-`Agent.cancel()` 的类型定义里没有提对应事件——若它其实什么都不发，取消仍会被
-当成成功。代码里在判别处标注了这个假设。确认方法：把 `logEvents` 打开跑一次
-DSH，按 Ctrl+C 打断一个任务，看日志里 running→idle 之间有没有 `agent/error`。
-
 ### 我们依赖的 DSH 契约，谁来盯
 
 插件监听 DSH 的事件、调用 `ctx.sessionTitle`，而这些定义**不在本仓库里**。
 `test/plugin-smoke.mjs` 的 mock 是照着代码的期望造的，只能证明代码自洽——
 DSH 那边改了形状，它照样全绿。
 
-所以 `@deepseek-ai/dsh-agent` 和 `@deepseek-ai/dsh-session-title` 既进了
+所以 `@deepseek-ai/dsh-agent`、`@deepseek-ai/dsh-session` 和
+`@deepseek-ai/dsh-session-title` 既进了
 `peerDependencies`（声明真实依赖），也进了本仓库的 `devDependencies`，
 由 `test/contract.mjs` 读它们的 `.d.ts`，把我们实际依赖的那几条断言死：
 `AgentStatus` 的取值、三个事件的载荷形状、`Agent.id` 的身份、
-`sessionTitle.get` 可能返回 `undefined`。契约一变，测试就红。
+`sessionTitle.get` 可能返回 `undefined`、`turn/end` 的 `reason` 形状与四种取消
+原因。契约一变，测试就红。
 
 注意这些包的 npm `latest` 标签是**陈旧的**（指向 `0.0.1-rc.1`，而实际已到
 `0.1.1-rc.2`），且 npm 的 prerelease 语义要求版本范围与目标版本
@@ -378,7 +398,7 @@ npm run test:orphan        # 断连兜底：短暂断连存活 / 长断连自尽
 ## 素材说明
 
 - `assets/立绘/跑步/跑步_01~08.png`：8 帧跑步动画（朝左），384×512 RGBA。
-- `assets/立绘/表情/*.png`：23 张表情立绘，384×512 RGBA（v1 用 `平常` 空闲、`晕` 出错、`寻找` 断连；完成改用动画）。
+- `assets/立绘/表情/*.png`：23 张表情立绘，384×512 RGBA（v1 用 `平常` 空闲、`晕` 出错、`坐下` 已终止、`寻找` 断连；完成改用动画）。
 - `assets/立绘/完成任务/f_001~078.webp`：完成动画帧，由 `build-animation.mjs` 从仓库外的 qtrle 母版生成。
 - `assets/立绘/表情.png`、`表情2.png`、`表情3.png`、`跑步.png`：1536×1024 总览大图。**参考用，不在运行时清单里**，不会进二进制。
 - `assets/音效/任务完成.mp3`：任务完成音效（2.4 秒）。`任务完成.wav`（1.5 秒）是上一版，保留但不再随包分发。

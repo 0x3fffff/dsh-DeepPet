@@ -16,6 +16,8 @@ const DONE_FPS = 15;
 const IDLE = "/立绘/表情/平常.webp";
 const SEARCHING = "/立绘/表情/寻找.webp";
 const TASK_FAILED = "/立绘/表情/晕.webp";
+// 「已终止」用中性表情：不庆祝，也不卖惨——是你自己按的终止。
+const TASK_CANCELED = "/立绘/表情/坐下.webp";
 const AUDIO = "/音效/任务完成.mp3";
 const FPS = 12;
 const POS_KEY = "deep-pet-position-v2";
@@ -154,7 +156,16 @@ interface Burst {
   successLabel: string;
   errorTitle: string | null;
   errorLabel: string;
+  canceledTitle: string | null;
+  canceledLabel: string;
   soundPlayed: boolean;
+}
+
+/** 优先级：出错 > 已终止 > 完成。 */
+function burstState(b: Burst): "error" | "canceled" | "success" {
+  if (b.errorTitle !== null) return "error";
+  if (b.canceledTitle !== null) return "canceled";
+  return "success";
 }
 
 let burst: Burst | null = null;
@@ -168,23 +179,26 @@ function decorate(label: string, title: string) {
 }
 
 function renderBurst(b: Burst, bubbleMs: number, fresh: boolean) {
-  const isError = b.errorTitle !== null;
+  const state = burstState(b);
   mode = "task";
   stopRun();
-  if (isError) {
+  let text: string;
+  if (state === "error") {
     stopDone(); // 出错抢占：中断完成动画，切静态图
     setSprite(TASK_FAILED, false); // 永远朝左、不镜像
-  } else if (fresh) {
-    // 只有新一轮爆发才起播。合并进来的后续完成不重播——播到一半重头来
-    // 会明显卡顿一下；气泡文字更新即可。
-    startDone(bubbleMs);
-  }
-  let text: string;
-  if (isError) {
-    // 出错优先占据气泡：那才是你需要立刻看到的。
     text = `${decorate(b.errorLabel, b.errorTitle as string)}出错了`;
     if (b.successes > 0) text += `（另有 ${b.successes} 个完成）`;
+  } else if (state === "canceled") {
+    stopDone(); // 终止同样抢占：完成动画在这里播完全是误导
+    setSprite(TASK_CANCELED, false);
+    text = `${decorate(b.canceledLabel, b.canceledTitle as string)}已终止`;
+    if (b.successes > 0) text += `（另有 ${b.successes} 个完成）`;
   } else {
+    if (fresh) {
+      // 只有新一轮爆发才起播。合并进来的后续完成不重播——播到一半重头来
+      // 会明显卡顿一下；气泡文字更新即可。
+      startDone(bubbleMs);
+    }
     text = b.successes > 1
       ? `${decorate(b.successLabel, b.successTitle)}等 ${b.successes} 个任务完成`
       : `${decorate(b.successLabel, b.successTitle)}完成`;
@@ -200,22 +214,30 @@ function renderBurst(b: Burst, bubbleMs: number, fresh: boolean) {
 
 function onTaskComplete(title: string, outcome: string, label: string) {
   const bubbleMs = settings.bubble_ms;
-  const ok = outcome !== "error";
   const fresh = burst === null;
   if (!burst) {
-    burst = { successes: 0, successTitle: "", successLabel: "", errorTitle: null, errorLabel: "", soundPlayed: false };
+    burst = {
+      successes: 0, successTitle: "", successLabel: "",
+      errorTitle: null, errorLabel: "",
+      canceledTitle: null, canceledLabel: "",
+      soundPlayed: false,
+    };
   }
-  if (ok) {
+  if (outcome === "error") {
+    burst.errorTitle = title;
+    burst.errorLabel = label;
+  } else if (outcome === "canceled") {
+    burst.canceledTitle = title;
+    burst.canceledLabel = label;
+  } else {
     burst.successes++;
     burst.successTitle = title;
     burst.successLabel = label;
-  } else {
-    burst.errorTitle = title;
-    burst.errorLabel = label;
   }
-  // 音效每轮爆发最多响一次：只有「任务完成」这一个音效，失败时放它是错的，
-  // 连续完成时反复 currentTime=0 重放会把它切成一串断音。
-  if (ok && !burst.soundPlayed && burst.errorTitle === null) {
+  // 音效每轮爆发最多响一次，且只在这一轮纯粹是成功时：只有「任务完成」
+  // 这一个音效，失败或被终止时放它都是错的；连续完成时反复 currentTime=0
+  // 重放还会把它切成一串断音。
+  if (!burst.soundPlayed && burstState(burst) === "success") {
     burst.soundPlayed = true;
     playDone();
   }

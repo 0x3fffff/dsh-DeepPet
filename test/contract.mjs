@@ -17,12 +17,15 @@ function read(pkg, ...rel) {
   return readFileSync(join(root, ...rel), "utf8");
 }
 
-let agentTypes, agentIndex, titleTypes;
+let agentTypes, agentIndex, titleTypes, sessionTypes, sessionIndex;
 try {
   agentTypes = read("@deepseek-ai/dsh-agent", "lib", "types", "runtime-types.d.ts");
   // 事件定义在 runtime-types，registry（roots/list）在 index——分开读。
   agentIndex = read("@deepseek-ai/dsh-agent", "lib", "types", "index.d.ts");
   titleTypes = read("@deepseek-ai/dsh-session-title", "lib", "types", "index.d.ts");
+  // 「终止」的判别器住在 session 日志里，不在 agent 事件里。
+  sessionTypes = read("@deepseek-ai/dsh-session", "lib", "types", "types.d.ts");
+  sessionIndex = read("@deepseek-ai/dsh-session", "lib", "types", "index.d.ts");
 } catch (err) {
   console.log(`SKIP: 未安装契约包（${err.message.split("\n")[0]}）；跑 pnpm install`);
   process.exit(0);
@@ -47,6 +50,18 @@ const checks = [
   // 我们用 agent.id 做键，靠的是它与 session 同一身份。
   ["Agent.id 仍是 SessionId",
     /readonly id: SessionId;/.test(agentTypes)],
+  // 取消**不发 agent/error**（已在真实 DSH 上实测）：用户点「终止对话」时
+  // turn 以 kind:'aborted' 收尾。这三条断言撑着整个「已终止」的判别。
+  ["session/event 仍是观察 session 日志的入口",
+    /'session\/event'\(this: Scoped<Session>, session: Session, event: SessionEvent\): void;/.test(sessionIndex)],
+  ["turn/end 仍带 reason",
+    /'turn\/end': \{\s*turn: number;\s*reason: TurnEndReason;\s*\}/.test(sessionTypes)],
+  ["TurnEndReason 仍有 aborted / error 两个 kind",
+    /aborted: \{\s*kind: 'aborted';\s*reason: TurnEndCancelCause;/.test(sessionTypes)
+      && /error: \{\s*kind: 'error';/.test(sessionTypes)],
+  ["取消原因仍区分 user / parent / hook / disposed",
+    ["user", "parent", "hook", "disposed"].every((k) =>
+      new RegExp(`readonly kind: '${k}';`).test(sessionTypes))],
   // 标题可能不存在——插件据此走「任务完成」而不是静默跳过。
   ["sessionTitle.get 仍可能返回 undefined",
     /get\(session: Session\): SessionTitleSnapshot \| undefined;/.test(titleTypes)],

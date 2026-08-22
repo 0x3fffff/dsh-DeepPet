@@ -24,7 +24,8 @@ const logs = [];
 const warns = [];
 const ctx = {
   on: (ev, fn) => { (listeners[ev] ??= []).push(fn); },
-  emit: (ev, payload) => { for (const fn of listeners[ev] ?? []) fn(payload); },
+  // 变参：session/event 的签名是 (session, event)，不是单一 payload。
+    emit: (ev, ...args) => { for (const fn of listeners[ev] ?? []) fn(...args); },
   sessionTitle: { get: () => ({ title: "集成测试" }) },
   credentials: { resolve: async () => ({ value: "sk-test", source: "env" }) },
   logger: { info: (m) => logs.push(String(m)), warn: (m) => warns.push(String(m)) },

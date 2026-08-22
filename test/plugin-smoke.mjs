@@ -15,7 +15,8 @@ async function run(title, steps, opts = {}) {
   const listeners = {}, logs = [], got = [];
   const ctx = {
     on: (ev, fn) => { (listeners[ev] ??= []).push(fn); },
-    emit: (ev, payload) => { for (const fn of listeners[ev] ?? []) fn(payload); },
+    // 变参：session/event 的签名是 (session, event)，不是单一 payload。
+    emit: (ev, ...args) => { for (const fn of listeners[ev] ?? []) fn(...args); },
     sessionTitle: { get: () => (title === undefined ? undefined : { title }) },
     // 默认这个 agent 就是顶层；传 roots: [] 模拟子 agent。
     agents: { roots: () => opts.roots ?? [AGENT] },
@@ -45,6 +46,12 @@ async function run(title, steps, opts = {}) {
 }
 
 const status = (s) => ({ agent: AGENT, status: s });
+const SESSION = { id: AGENT.id };
+/** 造一条 turn/end 的 session 事件。cause 仅在 aborted 时有意义。 */
+const turnEnd = (kind, cause) => [SESSION, {
+  type: "turn/end", seq: 1, time: Date.now(),
+  data: { turn: 1, reason: cause ? { kind, reason: { kind: cause } } : { kind } },
+}];
 const finish = (ctx) => { ctx.emit("agent/status", status("running")); ctx.emit("agent/status", status("idle")); };
 
 const cases = [];
@@ -85,6 +92,58 @@ const cases = [];
   });
   cases.push(["失败标记不跨轮次残留",
     got.length === 2 && got[0].outcome === "error" && got[1].outcome === "success", got]);
+}
+
+// 用户点「终止对话」：不发 agent/error，只在 turn/end 上留 aborted/user
+{
+  const got = await run("测试对话", (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("session/event", ...turnEnd("aborted", "user"));
+    ctx.emit("agent/status", status("idle"));
+  });
+  cases.push(["用户终止 → canceled",
+    got.length === 1 && got[0].outcome === "canceled", got]);
+}
+
+// turn/end 里的 error 同样要能判成失败（有些失败不发 agent/error）
+{
+  const got = await run("测试对话", (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("session/event", ...turnEnd("error"));
+    ctx.emit("agent/status", status("idle"));
+  });
+  cases.push(["turn/end error → error", got.length === 1 && got[0].outcome === "error", got]);
+}
+
+// 出错优先于终止
+{
+  const got = await run("测试对话", (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("session/event", ...turnEnd("aborted", "user"));
+    ctx.emit("agent/error", { agent: AGENT, turn: 1, step: 1, error: new Error("boom") });
+    ctx.emit("agent/status", status("idle"));
+  });
+  cases.push(["出错优先于终止", got.length === 1 && got[0].outcome === "error", got]);
+}
+
+// disposed 中止（通常是 DSH 正在退出）应当完全不播报，而不是庆祝
+{
+  const got = await run("测试对话", (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("session/event", ...turnEnd("aborted", "disposed"));
+    ctx.emit("agent/status", status("idle"));
+  });
+  cases.push(["disposed 中止 → 完全不播报", got.length === 0, got]);
+}
+
+// completed 正常收尾不受影响
+{
+  const got = await run("测试对话", (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("session/event", ...turnEnd("completed"));
+    ctx.emit("agent/status", status("idle"));
+  });
+  cases.push(["turn/end completed → success", got.length === 1 && got[0].outcome === "success", got]);
 }
 
 // 子 agent 不该庆祝：一个任务内部派三个子 agent 会庆祝四次
