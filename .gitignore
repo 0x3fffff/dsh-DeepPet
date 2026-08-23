@@ -10,3 +10,6 @@ packages/*/bin/
 
 # pet/public 由 scripts/build-assets.mjs 按清单从 assets/ 装配，是产物
 pet/public/
+
+# 探针截图。可能把当时屏幕上的任何东西一起抓进来，绝不入库。
+test/.shots/

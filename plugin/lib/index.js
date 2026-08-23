@@ -48,6 +48,72 @@ function sweepStalePlugins() {
   }
 }
 
+/**
+ * 任务进度文案。**全部来自真实数据**——`tool/call` 带工具名和模型产出的原始
+ * 参数，`todo/write` 带模型自己写的短句（契约：a short imperative line shown
+ * in the UI）。不编轮播文案：这句话为真的时候它才真的有用。
+ *
+ * 脱敏不是可选项：这个气泡是置顶的，会出现在截屏、录屏和屏幕共享里。
+ */
+const FILE_TOOLS = {
+  edit: "🧑‍💻 正在修改",
+  write: "🧑‍💻 正在写入",
+  read: "📖 正在阅读",
+  read_image: "🖼️ 正在查看",
+};
+
+/**
+ * 只取文件名：完整路径既塞不进 180px 的气泡，也不该出现在你的截屏里。
+ *
+ * 分隔符用 `fromCharCode(92)` 而不是字面量反斜杠：这段代码经过多层转义
+ * 传递时，`[\/]` 很容易被折叠成 `[/]`，那样 Windows 路径就一刀都切不动，
+ * 完整路径会原样显示——脱敏形同虚设。这是本文件里唯一一处出错会泄露信息
+ * 的地方，所以宁可写得笨一点。
+ */
+const BACKSLASH = String.fromCharCode(92);
+
+function baseName(p) {
+  if (typeof p !== "string" || !p) return "";
+  const parts = p.split("/").flatMap((seg) => seg.split(BACKSLASH)).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : "";
+}
+
+function programName(cmd) {
+  if (typeof cmd !== "string") return "";
+  const trimmed = cmd.trim();
+  // 带引号的程序路径（Windows 上 `"C:\Program Files\..."` 很常见）先按引号取，
+  // 否则会在路径中间的空格处断开。不带引号又含空格的路径本身就是歧义的，
+  // 退化成取第一个空白分隔的词——**精度是尽力而为，安全是保证**：
+  // 无论走哪条分支，命令行的其余部分都不会出现在气泡里。
+  let first;
+  if (trimmed.startsWith('"')) {
+    const end = trimmed.indexOf('"', 1);
+    first = end > 0 ? trimmed.slice(1, end) : trimmed.slice(1);
+  } else {
+    first = trimmed.split(/\s+/)[0] ?? "";
+  }
+  return baseName(first).replace(/\.(exe|cmd|bat|ps1)$/i, "");
+}
+
+function truncate(text, n) {
+  return text.length > n ? `${text.slice(0, n - 1)}…` : text;
+}
+
+function progressFromToolCall(name, argsJson) {
+  let args = {};
+  try { args = JSON.parse(argsJson) || {}; } catch {}
+  const verb = FILE_TOOLS[name];
+  if (verb) {
+    const file = baseName(args.file_path ?? args.path);
+    return file ? `${verb} ${truncate(file, 20)}` : `${verb}文件`;
+  }
+  if (name === "bash" || name === "pwsh") {
+    const prog = programName(args.command);
+    return prog ? `🔧 正在执行 ${truncate(prog, 14)} 命令` : "🔧 正在执行命令";
+  }
+  return `⚙️ 正在使用 ${truncate(String(name ?? ""), 16)}`;
+}
+
 /** 插件版本，用于与桌宠二进制做协议对齐检查。 */
 const { version: VERSION } = require("../package.json");
 
@@ -87,6 +153,7 @@ function apply(ctx, config) {
   // 「完成」分支会变成关 DSH 时闪一下庆祝，比播报还糟。
   const suppressed = new Set();
   const helloTimers = new Set();
+  let lastWorking = false;
   let child = null;
   let regFile = null;
   let regPort = 0;
@@ -110,6 +177,8 @@ function apply(ctx, config) {
   wss.on("connection", (ws) => {
     log("deep-pet: pet connected");
     clients.add(ws);
+    // 补发当前工作态：桌宠可能在 DSH 已经跑着任务时才启动/重连。
+    send(ws, { type: "working", active: currentlyWorking() });
     // 正常桌宠一连上就报版本；超时没报说明是不带握手的旧二进制。
     const helloTimer = setTimeout(() => {
       helloTimers.delete(helloTimer);
@@ -146,6 +215,28 @@ function apply(ctx, config) {
    * 不产生 turn/end。两者互补。
    */
   ctx.on("session/event", (session, event) => {
+    // 任务进度：**无条件**广播每一条，限流全部交给桌宠侧。
+    // 从前 todo 的遮蔽判定在这里，被压掉的事件就此消失——桌宠侧的测试日志
+    // 因此永远看不到「有过这个事件、但被丢了」，排查时无从下手。限流集中到
+    // 一处之后，这里只负责脱敏和分类。
+    if (event?.type === "todo/write") {
+      const cur = event.data?.todos?.find?.((t) => t?.status === "in_progress");
+      if (cur?.content) {
+        broadcast({ type: "progress", kind: "todo", text: `🧠 ${truncate(String(cur.content), 24)}` });
+      }
+      return;
+    }
+    if (event?.type === "tool/call") {
+      const name = String(event.data?.name ?? "");
+      broadcast({
+        type: "progress",
+        kind: "tool",
+        // 工具名本身不含用户数据（参数才含），单独带上供测试面板显示。
+        tool: name,
+        text: progressFromToolCall(name, event.data?.arguments),
+      });
+      return;
+    }
     if (event?.type !== "turn/end") return;
     const id = session?.id;
     const reason = event.data?.reason;
@@ -163,6 +254,18 @@ function apply(ctx, config) {
     if (cause === "user" || cause === "hook") canceled.add(id);
     else suppressed.add(id);
   });
+
+  /** 当前有没有顶层 agent 在跑。直接查 status 比自己维护计数可靠。 */
+  function currentlyWorking() {
+    try { return ctx.agents.roots().some((a) => a.status === "running"); } catch { return false; }
+  }
+
+  function pushWorking(force = false) {
+    const active = currentlyWorking();
+    if (!force && active === lastWorking) return;
+    lastWorking = active;
+    broadcast({ type: "working", active });
+  }
 
   ctx.on("agent/error", ({ agent }) => {
     if (config.logEvents) log(`deep-pet: agent/error id=${agent?.id}`);
@@ -189,8 +292,10 @@ function apply(ctx, config) {
       failed.delete(id);
       canceled.delete(id);
       suppressed.delete(id);
+      pushWorking();
       return;
     }
+    pushWorking();
     if (prev !== "running") return;
     // 优先级：出错 > 已终止 > 完成。错误是必须看到的；用户自己触发的终止
     // 压过庆祝，但不该压过失败。两个 delete 无论是否顶层都要执行，否则
@@ -315,3 +420,5 @@ function apply(ctx, config) {
 }
 
 export { Config, apply, inject, name };
+// 仅供测试：脱敏是安全相关的，必须能被直接断言。
+export { baseName, programName, progressFromToolCall };

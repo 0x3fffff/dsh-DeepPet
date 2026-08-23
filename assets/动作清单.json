@@ -1,0 +1,32 @@
+{
+  "_说明": [
+    "加一个动作 = 把 .mov 母版放进 masterDir，并在 actions 里加一行。不用改代码。",
+    "母版体积很大（每个 70~140 MB），不进 git；转出的 .webm 进 git。",
+    "改完跑 node scripts/build-animation.mjs 重新转码。",
+    "",
+    "字段：",
+    "  id     前端引用它的名字，也是产出文件名",
+    "  file   masterDir 下的母版文件名",
+    "  pool   归属哪一池：idle 随机待机 / long-idle 长时间无操作 / working 工作中",
+    "         / edge 屏幕边缘 / announce 播报",
+    "  role   池内角色：intro 入场（一次性，播完接 next）/ loop 循环 / 缺省为一次性",
+    "  next   role=intro 时播完接哪个 id",
+    "  hold   'last-frame' 表示再导出一张末帧静图，供播完后常驻"
+  ],
+  "masterDir": "../立绘/视频动作",
+  "actions": [
+    { "id": "typing-intro", "file": "开始打字.mov",   "pool": "working",   "role": "intro", "next": "typing-loop" },
+    { "id": "typing-loop",  "file": "持续打字1.mov",  "pool": "working",   "role": "loop" },
+
+    { "id": "idle-1",       "file": "待机.mov",       "pool": "idle" },
+    { "id": "idle-2",       "file": "待机2.mov",      "pool": "idle" },
+    { "id": "idle-3",       "file": "待机3.mov",      "pool": "idle" },
+
+    { "id": "doze",         "file": "打瞌睡.mov",     "pool": "long-idle" },
+    { "id": "phone",        "file": "玩手机.mov",     "pool": "long-idle" },
+
+    { "id": "edge-lean",    "file": "靠屏幕左边.mov", "pool": "edge",      "role": "intro", "hold": "last-frame" },
+
+    { "id": "done",         "file": "完成任务-rle.mov", "pool": "announce" }
+  ]
+}

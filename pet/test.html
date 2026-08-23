@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>dsh-deep-pet 测试面板</title>
+    <link rel="stylesheet" href="/src/test.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section>
+        <h2>动作预览</h2>
+        <p class="hint">
+          点一下就在桌面上那只真桌宠身上播——面板里不内嵌预览，因为只有真桌宠
+          才能看出透明合成、尺寸、镜像和命中区。动作列表来自
+          <code>动作/index.json</code>，加了新动作这里自动多出来。
+        </p>
+        <div id="actions" class="grid"></div>
+        <label class="check"><input type="checkbox" id="mirror" /> 镜像播放（右侧朝向）</label>
+      </section>
+
+      <section>
+        <h2>事件触发</h2>
+        <div class="grid">
+          <button data-cmd='{"cmd":"working","active":true}'>▶ 任务开始</button>
+          <button data-cmd='{"cmd":"working","active":false}'>■ 任务结束</button>
+          <button data-cmd='{"cmd":"complete","outcome":"success"}'>🎉 完成</button>
+          <button data-cmd='{"cmd":"complete","outcome":"error"}'>💥 出错</button>
+          <button data-cmd='{"cmd":"complete","outcome":"canceled"}'>🚫 已终止</button>
+          <button data-cmd='{"cmd":"long-idle","on":true}'>😴 进入长闲</button>
+          <button data-cmd='{"cmd":"long-idle","on":false}'>☀ 退出长闲</button>
+          <button data-cmd='{"cmd":"edge","side":"left"}'>⇤ 强制贴左</button>
+          <button data-cmd='{"cmd":"edge","side":"right"}'>⇥ 强制贴右</button>
+          <button data-cmd='{"cmd":"edge","side":null}'>↔ 离开贴边</button>
+          <button data-cmd='{"cmd":"reset"}' class="wide">↺ 复位到平常</button>
+        </div>
+        <div class="row">
+          <input type="text" id="progressText" placeholder="🧑‍💻 正在修改 main.ts" />
+          <button id="sendProgress">发进度气泡</button>
+        </div>
+        <p class="hint">
+          进度气泡只在「任务进行中」才显示——先点「任务开始」，否则它会被丢弃
+          （日志里能看到原因）。
+        </p>
+      </section>
+
+      <section class="grow">
+        <h2>
+          实时事件日志
+          <button id="clearLog" class="mini">清空</button>
+        </h2>
+        <p class="hint">
+          记录每条进度事件的去向：<b>已显示</b> / <b>被 todo 遮蔽</b> /
+          <b>被新事件覆盖</b> / <b>被播报占用</b> / <b>任务已结束</b>。
+          只记工具名和脱敏后的气泡文本，<b>不记参数原文</b>——这个窗口会出现在
+          你的录屏里。
+        </p>
+        <div id="log" class="log"></div>
+      </section>
+    </main>
+    <script type="module" src="/src/test.ts"></script>
+  </body>
+</html>

@@ -27,7 +27,9 @@
   white-space: normal;
 }
 
-/* 指向桌宠的小尖角。跟着 --bg / --border 走，否则换了深色底会露出白尖角。 */
+/* 指向桌宠的小尖角。跟着 --bg / --border 走，否则换了深色底会露出白尖角。
+   --tail-shift 与气泡整体的 --shift 反号：气泡为了避开屏幕边往内挪了多少，
+   尖角就往回挪多少，好让它**始终指着立绘中心**。 */
 .bubble::after {
   content: "";
   position: absolute;
@@ -35,7 +37,7 @@
   bottom: calc(var(--tail) / -2 - 1px);
   width: var(--tail);
   height: var(--tail);
-  margin-left: calc(var(--tail) / -2);
+  margin-left: calc(var(--tail) / -2 + var(--tail-shift, 0px));
   background: var(--bg);
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -104,7 +106,7 @@
   width: 16px;
   height: 12px;
   bottom: -12px;
-  margin-left: -8px;
+  margin-left: calc(-8px + var(--tail-shift, 0px));
   background: #1b1b2a;
   border: 0;
   border-radius: 0;

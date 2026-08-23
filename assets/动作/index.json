@@ -1,0 +1,43 @@
+[
+  {
+    "id": "typing-intro",
+    "pool": "working",
+    "role": "intro",
+    "next": "typing-loop"
+  },
+  {
+    "id": "typing-loop",
+    "pool": "working",
+    "role": "loop"
+  },
+  {
+    "id": "idle-1",
+    "pool": "idle"
+  },
+  {
+    "id": "idle-2",
+    "pool": "idle"
+  },
+  {
+    "id": "idle-3",
+    "pool": "idle"
+  },
+  {
+    "id": "doze",
+    "pool": "long-idle"
+  },
+  {
+    "id": "phone",
+    "pool": "long-idle"
+  },
+  {
+    "id": "edge-lean",
+    "pool": "edge",
+    "role": "intro",
+    "hold": true
+  },
+  {
+    "id": "done",
+    "pool": "announce"
+  }
+]

@@ -152,11 +152,104 @@ async fn open_settings(app: tauri::AppHandle) -> Result<String, String> {
     Ok(win.url().map(|u| u.to_string()).unwrap_or_default())
 }
 
+// ---- 测试面板 ----
+// 面板只是一排按钮：它不自己渲染桌宠，而是把指令转发给桌宠窗口，由那只真
+// 桌宠执行。只有这样看到的才是真实的透明合成、尺寸、镜像和命中区——面板内
+// 嵌预览至多能证明视频文件可解码。
+
+/// 按需创建测试窗口。和 open_settings 一样**必须是 async**：同步命令跑在
+/// 工作线程上，而 Windows 下 WebView2 的初始化要走主线程事件循环，同步创建
+/// 会得到一个纯白的空窗口。
+#[tauri::command]
+async fn open_test(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("test") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    let win = tauri::WebviewWindowBuilder::new(&app, "test", tauri::WebviewUrl::App("test.html".into()))
+        .title("dsh-deep-pet 测试面板")
+        .inner_size(460.0, 680.0)
+        .min_inner_size(400.0, 460.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    // 面板一关就通知桌宠停投脉络，否则关掉面板后桌宠会一直往一个不存在的
+    // 窗口发 IPC。开启由面板自己在加载完成时调 set_trace(true)。
+    let handle = app.clone();
+    win.on_window_event(move |e| {
+        if matches!(e, tauri::WindowEvent::Destroyed) {
+            if let Some(pet) = handle.get_webview_window("pet") {
+                let _ = pet.emit("trace-enabled", false);
+            }
+        }
+    });
+    Ok(())
+}
+
+/// 面板 → 桌宠。载荷不透明，桌宠侧自己解释。
+#[tauri::command]
+fn pet_test(app: tauri::AppHandle, payload: serde_json::Value) {
+    if let Some(win) = app.get_webview_window("pet") {
+        let _ = win.emit("pet-test", payload);
+    }
+}
+
+/// 桌宠 → 面板。桌宠只在面板开着时才发（靠 trace-enabled 通知），
+/// 所以这里不需要再判一次窗口在不在。
+#[tauri::command]
+fn pet_trace(app: tauri::AppHandle, entry: serde_json::Value) {
+    if let Some(win) = app.get_webview_window("test") {
+        let _ = win.emit("pet-trace", entry);
+    }
+}
+
+/// 面板就绪/关闭时开关桌宠侧的脉络投递。关着的时候一次 IPC 都不发。
+#[tauri::command]
+fn set_trace(app: tauri::AppHandle, on: bool) {
+    if let Some(win) = app.get_webview_window("pet") {
+        let _ = win.emit("trace-enabled", on);
+    }
+}
+
 /// 把桌宠挪回默认位置。解决「被拖到已拔掉的显示器上后找不回来」——
 /// 在此之前唯一的办法是手工清 localStorage。
 #[tauri::command]
 fn reset_position(app: tauri::AppHandle) {
     let _ = app.emit("reset-position", ());
+}
+
+// ---- 系统级空闲 ----
+// 「长时间无操作」用的是**全系统**最后一次输入到现在的时长，而不是「有没有
+// 碰过桌宠」——「打瞌睡 / 玩手机」的潜台词是主人不在。只看桌宠的话，你在
+// 旁边写一小时代码它也会睡着。
+
+#[repr(C)]
+struct LastInputInfo {
+    cb_size: u32,
+    dw_time: u32,
+}
+
+extern "system" {
+    fn GetLastInputInfo(plii: *mut LastInputInfo) -> i32;
+    fn GetTickCount() -> u32;
+}
+
+/// 全系统空闲毫秒数。取不到就报 0（当作刚有输入），宁可不睡也不误睡。
+#[tauri::command]
+fn system_idle_ms() -> u32 {
+    unsafe {
+        let mut lii = LastInputInfo {
+            cb_size: std::mem::size_of::<LastInputInfo>() as u32,
+            dw_time: 0,
+        };
+        if GetLastInputInfo(&mut lii) == 0 {
+            return 0;
+        }
+        // GetTickCount 会在约 49.7 天后回绕，wrapping_sub 正好处理。
+        GetTickCount().wrapping_sub(lii.dw_time)
+    }
 }
 
 /// 退出桌宠。在此之前关掉桌宠的唯一方式是关掉 DSH。
@@ -314,7 +407,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_init, set_hit, list_plugins, show_pet,
-            get_settings, set_settings, open_settings, reset_position, quit_pet
+            get_settings, set_settings, open_settings, reset_position, quit_pet,
+            system_idle_ms, open_test, pet_test, pet_trace, set_trace
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

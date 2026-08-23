@@ -62,6 +62,16 @@ const checks = [
   ["取消原因仍区分 user / parent / hook / disposed",
     ["user", "parent", "hook", "disposed"].every((k) =>
       new RegExp(`readonly kind: '${k}';`).test(sessionTypes))],
+  // 工作态直接查 Agent.status，比自己维护计数可靠。
+  ["Agent.status 仍可读",
+    /readonly status: AgentStatus;/.test(agentTypes)],
+  // 进度气泡的两个数据源。没有它们就只能编轮播文案。
+  ["tool/call 仍带 name + arguments",
+    /'tool\/call': \{[^}]*name: string;[^}]*arguments: string;/s.test(sessionTypes)],
+  ["todo/write 仍带 todos，TodoItem 仍有 content + status",
+    /'todo\/write': \{\s*todos: TodoItem\[\];/.test(sessionTypes)
+      && /content: string;/.test(sessionTypes)
+      && /status: 'pending' \| 'in_progress' \| 'completed';/.test(sessionTypes)],
   // 标题可能不存在——插件据此走「任务完成」而不是静默跳过。
   ["sessionTitle.get 仍可能返回 undefined",
     /get\(session: Session\): SessionTitleSnapshot \| undefined;/.test(titleTypes)],

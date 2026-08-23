@@ -5,7 +5,7 @@
 import { WebSocket } from "ws";
 import { apply } from "../plugin/lib/index.js";
 
-const AGENT = { id: "s1", session: { id: "s1" } };
+const AGENT = { id: "s1", session: { id: "s1" }, status: "idle" };
 
 /**
  * 起一个插件实例，连上去，跑 steps，收集广播到桌宠的消息。
@@ -36,7 +36,13 @@ async function run(title, steps, opts = {}) {
   const port = Number(logs.find((l) => l.includes("ws://"))?.match(/:(\d+)/)?.[1]);
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   await new Promise((r) => ws.on("open", r));
-  ws.on("message", (d) => { const m = JSON.parse(String(d)); if (m.type === "task-complete") got.push(m); });
+  const all = [];
+  ws.on("message", (d) => {
+    const m = JSON.parse(String(d));
+    all.push(m);
+    if (m.type === "task-complete") got.push(m);
+  });
+  got.all = all;
 
   steps(ctx);
   await new Promise((r) => setTimeout(r, 300));
@@ -45,7 +51,7 @@ async function run(title, steps, opts = {}) {
   return got;
 }
 
-const status = (s) => ({ agent: AGENT, status: s });
+const status = (s) => { AGENT.status = s; return { agent: AGENT, status: s }; };
 const SESSION = { id: AGENT.id };
 /** 造一条 turn/end 的 session 事件。cause 仅在 aborted 时有意义。 */
 const turnEnd = (kind, cause) => [SESSION, {
@@ -144,6 +150,76 @@ const cases = [];
     ctx.emit("agent/status", status("idle"));
   });
   cases.push(["turn/end completed → success", got.length === 1 && got[0].outcome === "success", got]);
+}
+
+// 工作态：running 时报 active:true，回到 idle 报 false
+{
+  const got = await run("测试对话", finish);
+  const w = got.all.filter((m) => m.type === "working").map((m) => m.active);
+  cases.push(["工作态 true → false", JSON.stringify(w.slice(-2)) === "[true,false]", w]);
+}
+
+// 桌宠连上时补发当前状态——它可能在 DSH 已经跑着任务时才启动
+{
+  const got = await run("测试对话", (ctx) => { ctx.emit("agent/status", status("running")); });
+  const first = got.all.find((m) => m.type === "working");
+  cases.push(["连接时补发工作态", first !== undefined, got.all.slice(0, 2)]);
+}
+
+// 进度：工具调用（脱敏细节由 test/redact.mjs 覆盖）
+{
+  const got = await run("测试对话", (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("session/event", SESSION, {
+      type: "tool/call", seq: 2, time: Date.now(),
+      data: { turn: 1, step: 1, callId: "c1", name: "edit", arguments: JSON.stringify({ file_path: "src/main.ts" }) },
+    });
+  });
+  const p = got.all.find((m) => m.type === "progress");
+  cases.push(["tool/call → 进度气泡", p?.text === "🧑‍💻 正在修改 main.ts", p]);
+}
+
+// 进度：插件**不做**限流，每一条都发，并带上 kind/tool 供桌宠侧仲裁。
+// 遮蔽判定曾经在插件里，被压掉的事件就此消失，测试面板因此永远看不到
+// 「有过这个事件、但被丢了」。限流现在集中在桌宠侧（main.ts 的 onProgress）。
+{
+  const got = await run("测试对话", (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("session/event", SESSION, {
+      type: "todo/write", seq: 2, time: Date.now(),
+      data: { todos: [{ content: "重写呈现层", status: "in_progress" }, { content: "别的", status: "pending" }] },
+    });
+    ctx.emit("session/event", SESSION, {
+      type: "tool/call", seq: 3, time: Date.now(),
+      data: { turn: 1, step: 1, callId: "c1", name: "edit", arguments: JSON.stringify({ file_path: "x.ts" }) },
+    });
+  });
+  const ps = got.all.filter((m) => m.type === "progress");
+  cases.push(["todo 与随后的工具进度都下发，不在插件侧丢弃",
+    ps.length === 2
+    && ps[0].kind === "todo" && ps[0].text === "🧠 重写呈现层"
+    && ps[1].kind === "tool" && ps[1].text === "🧑‍💻 正在修改 x.ts",
+    ps]);
+  // 工具名要原样带上：测试面板的日志靠它认出 think/pwsh 这类没有专属文案的
+  // 工具，而气泡文本里只有「正在使用 xxx」的截断版本。
+  cases.push(["工具进度带上未截断的工具名", ps[1]?.tool === "edit", ps[1]]);
+}
+
+// 没有专属文案的工具（think、pwsh 之类）同样要发出来，不能静悄悄消失。
+{
+  const got = await run("测试对话", (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    for (const name of ["think", "pwsh"]) {
+      ctx.emit("session/event", SESSION, {
+        type: "tool/call", seq: 2, time: Date.now(),
+        data: { turn: 1, step: 1, callId: "c1", name, arguments: "{}" },
+      });
+    }
+  });
+  const ps = got.all.filter((m) => m.type === "progress");
+  cases.push(["think / pwsh 都产出非空进度",
+    ps.length === 2 && ps.every((p) => p.text) && ps[0].tool === "think" && ps[1].tool === "pwsh",
+    ps.map((p) => `${p.tool}: ${p.text}`)]);
 }
 
 // 子 agent 不该庆祝：一个任务内部派三个子 agent 会庆祝四次

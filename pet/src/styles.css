@@ -28,6 +28,23 @@ body {
   -webkit-user-drag: none;
 }
 
+/* 动作视频。两个元素轮换播放：同一个 <video> 换 src 会立刻清空当前帧，
+   中间必然露白，所以新动作先在闲置的那个里缓好，旧的定格在最后一帧不动，
+   等新的真的呈现出第一帧再硬切。
+   隐藏一律用 opacity 而不是 display:none —— display:none 的 video 在
+   Chromium 里可能不再产出帧，那样「等第一帧」就永远等不到。
+   永远 pointer-events:none：拖动/双击/右键都由 #pet-img 接管，它同样靠
+   opacity 隐藏，布局盒和命中测试因此始终有效。 */
+#pet-video,
+#pet-video-b {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  object-fit: contain;
+  opacity: 0;
+  pointer-events: none;
+}
+
 #pet-img:active {
   cursor: grabbing;
 }
@@ -39,14 +56,17 @@ body {
   max-width: 180px;
   z-index: 10;
   opacity: 0;
-  transform: translateX(-50%) rotate(var(--tilt)) translateY(4px) scale(0.96);
+  /* --shift 由 layoutBubble() 算出：贴边时窗口有一截悬在屏幕外，气泡得往
+     可见的那一侧挪，否则会被屏幕边裁掉。不贴边时它是 0。 */
+  transform: translateX(calc(-50% + var(--shift, 0px))) rotate(var(--tilt)) translateY(4px)
+    scale(0.96);
   transition: opacity 0.18s ease, transform 0.18s ease;
   pointer-events: none;
 }
 
 #bubble.show {
   opacity: 1;
-  transform: translateX(-50%) rotate(var(--tilt)) translateY(0) scale(1);
+  transform: translateX(calc(-50% + var(--shift, 0px))) rotate(var(--tilt)) translateY(0) scale(1);
 }
 
 #menu {
