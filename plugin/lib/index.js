@@ -107,6 +107,7 @@ function progressFromToolCall(name, argsJson) {
     const file = baseName(args.file_path ?? args.path);
     return file ? `${verb} ${truncate(file, 20)}` : `${verb}文件`;
   }
+  if (name === "think") return "🧠 思考中...";
   if (name === "bash" || name === "pwsh") {
     const prog = programName(args.command);
     return prog ? `🔧 正在执行 ${truncate(prog, 14)} 命令` : "🔧 正在执行命令";

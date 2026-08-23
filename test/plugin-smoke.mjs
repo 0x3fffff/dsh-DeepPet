@@ -205,7 +205,7 @@ const cases = [];
   cases.push(["工具进度带上未截断的工具名", ps[1]?.tool === "edit", ps[1]]);
 }
 
-// 没有专属文案的工具（think、pwsh 之类）同样要发出来，不能静悄悄消失。
+// think 有专属文案（思考中），pwsh 走命令文案；两者都要非空下发。
 {
   const got = await run("测试对话", (ctx) => {
     ctx.emit("agent/status", status("running"));
@@ -217,8 +217,10 @@ const cases = [];
     }
   });
   const ps = got.all.filter((m) => m.type === "progress");
-  cases.push(["think / pwsh 都产出非空进度",
-    ps.length === 2 && ps.every((p) => p.text) && ps[0].tool === "think" && ps[1].tool === "pwsh",
+  cases.push(["think → 思考中、pwsh → 执行命令",
+    ps.length === 2
+    && ps[0].tool === "think" && ps[0].text === "🧠 思考中..."
+    && ps[1].tool === "pwsh" && ps[1].text === "🔧 正在执行命令",
     ps.map((p) => `${p.tool}: ${p.text}`)]);
 }
 
