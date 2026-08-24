@@ -3,6 +3,9 @@
   "version": "0.2.0",
   "description": "dsh-deep-pet 桌宠二进制（Windows x64）",
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/0x3fffff/dsh-DeepPet.git" },
+  "homepage": "https://github.com/0x3fffff/dsh-DeepPet#readme",
+  "bugs": "https://github.com/0x3fffff/dsh-DeepPet/issues",
   "os": ["win32"],
   "cpu": ["x64"],
   "files": [
