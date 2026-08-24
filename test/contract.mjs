@@ -17,7 +17,7 @@ function read(pkg, ...rel) {
   return readFileSync(join(root, ...rel), "utf8");
 }
 
-let agentTypes, agentIndex, titleTypes, sessionTypes, sessionIndex;
+let agentTypes, agentIndex, titleTypes, sessionTypes, sessionIndex, rpcTypes;
 try {
   agentTypes = read("@deepseek-ai/dsh-agent", "lib", "types", "runtime-types.d.ts");
   // 事件定义在 runtime-types，registry（roots/list）在 index——分开读。
@@ -26,12 +26,28 @@ try {
   // 「终止」的判别器住在 session 日志里，不在 agent 事件里。
   sessionTypes = read("@deepseek-ai/dsh-session", "lib", "types", "types.d.ts");
   sessionIndex = read("@deepseek-ai/dsh-session", "lib", "types", "index.d.ts");
+  // 网页端「启动桌宠」按钮走 connection 的 RPC 通道。通道形状变了不会报错，
+  // 只会让按钮静默失灵——所以也钉住。
+  rpcTypes = read("@deepseek-ai/dsh-client-connection", "lib", "types", "rpc.d.ts");
 } catch (err) {
   console.log(`SKIP: 未安装契约包（${err.message.split("\n")[0]}）；跑 pnpm install`);
   process.exit(0);
 }
 
 const checks = [
+  // host 侧注册通道的签名。少一个 options 参数就注册不上，而那时按钮只是
+  // 「点了没反应」。
+  ["connection.rpc.handle 仍是 (channel, handler, options)",
+    /handle\(channel: string, handler: ConnectionRpcHandler, options: ConnectionRpcHandlerOptions\)/.test(rpcTypes)],
+  // 我们把 /pet 限定成 loopback：只信本机浏览器。这个取值没了就得重新选。
+  ["ConnectionRpcAuthority 仍含 'loopback'",
+    /export type ConnectionRpcAuthority = 'trusted-host' \| 'loopback';/.test(rpcTypes)],
+  // handler 的入参顺序：第一个必须是 endpoint，我们靠它分辨 launch。
+  ["ConnectionRpcHandler 仍是 (endpoint, payload, signal)",
+    /ConnectionRpcHandler = \(endpoint: string, payload: unknown, signal: AbortSignal\)/.test(rpcTypes)],
+  // 客户端那半的调用签名，client.js 里按它写的。
+  ["client 侧 rpc.call 仍是 (channel, endpoint, payload, signal?)",
+    /call\(channel: string, endpoint: string, payload: unknown, signal\?: AbortSignal\)/.test(rpcTypes)],
   // agent/status 只有两个值，这正是它分不出成败、必须靠 agent/error 判别的原因。
   // 若这里多出第三个值，整个 running->idle 边沿检测的语义都要重估。
   ["AgentStatus 仍是 'idle' | 'running'",

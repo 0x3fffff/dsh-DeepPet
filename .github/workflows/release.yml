@@ -1,5 +1,5 @@
-# 发版：编译各平台桌宠二进制 → 先发平台包，再发插件包。
-# 顺序不能反：插件对平台包是精确 pin，平台包必须先在 registry 上。
+# 发版：编译各平台桌宠二进制 → 先发平台包和网页包，最后发插件包。
+# 顺序不能反：插件对这两个包都是精确 pin，它们必须先在 registry 上。
 name: release
 
 on:
@@ -78,6 +78,11 @@ jobs:
           test "$tag" = "$pkg" || { echo "tag $tag != version $pkg"; exit 1; }
       - name: publish platform packages
         working-directory: packages/win32-x64
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish web client
+        working-directory: client
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

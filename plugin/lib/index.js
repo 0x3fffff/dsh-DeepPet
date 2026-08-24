@@ -382,8 +382,12 @@ function apply(ctx, config) {
     }
   }
 
-  // WS 绑定后拉起桌宠窗口。
-  void (async () => {
+  let launching = false;
+
+  /** 拉起桌宠。桌宠用文件锁做单例，重复调用不会开出第二个窗口。 */
+  async function launchPet() {
+    if (launching) return;
+    launching = true;
     try {
       const port = await new Promise((resolve, reject) => {
         const ready = () => {
@@ -408,8 +412,6 @@ function apply(ctx, config) {
         warn(`登记会合目录失败 ${err?.message ?? err}`);
       }
       const bin = resolveBinary();
-      // 总是尝试拉起。桌宠自己用文件锁做单例，多余的进程会在显示窗口之前
-      // 安静退出——所以这里不必再实现一套跨进程抢锁。
       child = spawn(bin, [], {
         env: { ...process.env, DSH_PET_WS_URL: `ws://127.0.0.1:${port}` },
         stdio: "ignore",
@@ -419,8 +421,54 @@ function apply(ctx, config) {
       child.on("exit", () => { child = null; });
     } catch (err) {
       warn(String(err?.message ?? err));
+    } finally {
+      launching = false;
     }
-  })();
+  }
+
+  /** 桌宠是否在跑（已连上，或本插件刚拉起、还没回报 hello）。 */
+  function isPetRunning() {
+    return clients.size > 0 || child !== null;
+  }
+
+  /**
+   * 网页按钮的入口：已经连上就重置位置（不重复启动），没连上就拉起。
+   * 返回给调用方的 JSON 只带一个动作名，好让按钮把结果展示出来。
+   */
+  function ensurePet() {
+    if (isPetRunning()) {
+      broadcast({ type: "reset-position" });
+      return { action: "reset" };
+    }
+    void launchPet();
+    return { action: "launch" };
+  }
+
+  // 网页按钮：注册 client→host 的私有 RPC 通道 /pet。
+  //
+  // 用 ctx.inject 而不是把 "connection" 写进插件的 inject 数组——这个 Cordis
+  // 版本的 Inject 没有「可选依赖」，写进去会让**纯 CLI 用户的插件直接加载不
+  // 了**，桌宠也就起不来。而 ctx.inject 的语义正好：服务在才跑回调，不在就
+  // 什么都不做。
+  //
+  // 也不能像先前那样在 apply 里一次性 ctx.get：那只看得到「此刻」有没有这个
+  // 服务，网页端晚一步连上来就再也注册不上了。
+  ctx.inject(["connection"], (scoped) => {
+    const rpc = scoped.get("connection")?.rpc;
+    if (!rpc?.handle) return;
+    // handle 返回的是异步 disposer，必须留着——插件卸载时不注销通道，
+    // 重载后再注册同一个 channel 就会撞车。
+    const dispose = rpc.handle("/pet", async (endpoint) => {
+      if (endpoint !== "launch") {
+        return { ok: false, error: { code: "not-found", message: `unknown endpoint ${endpoint}`, details: {} } };
+      }
+      return { ok: true, value: ensurePet() };
+    }, { authority: "loopback" });
+    return () => { void dispose?.(); };
+  });
+
+  // 插件加载即拉起一次。
+  void launchPet();
 
   // 插件销毁时清理。
   return () => {

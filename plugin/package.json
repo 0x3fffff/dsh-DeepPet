@@ -19,6 +19,7 @@
   ],
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
+    "dsh-deep-pet-client": "0.2.0",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {

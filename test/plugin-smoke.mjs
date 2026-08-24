@@ -22,6 +22,13 @@ async function run(title, steps, opts = {}) {
     agents: { roots: () => opts.roots ?? [AGENT] },
     credentials: { resolve: async () => ({ value: "sk-test", source: "env" }) },
     logger: { info: (m) => logs.push(String(m)), warn: () => {} },
+    // 网页端的 connection 服务。默认**不提供**——纯 CLI 的 DSH 就是这样，
+    // 插件必须照常工作。传 opts.connection 才模拟网页端在场。
+    get: (name) => (name === "connection" ? opts.connection : undefined),
+    inject: (deps, cb) => {
+      if (deps.includes("connection") && !opts.connection) return;
+      cb(ctx);
+    },
   };
   const cleanup = apply(ctx, {
     enabled: true,
@@ -253,6 +260,39 @@ const cases = [];
     && ps[0].tool === "think" && ps[0].text === "🧠 思考中..."
     && ps[1].tool === "pwsh" && ps[1].text === "🔧 正在执行命令",
     ps.map((p) => `${p.tool}: ${p.text}`)]);
+}
+
+// 网页端「启动桌宠」按钮：插件要注册一个 /pet 的 RPC 通道。
+// 这条路和 CLI 完全无关，所以两种情形都得测——纯 CLI 下不能因为没有
+// connection 服务就出事。
+{
+  const handled = [];
+  const connection = {
+    rpc: {
+      handle: (channel, handler, options) => {
+        handled.push({ channel, handler, options });
+        return async () => {};
+      },
+    },
+  };
+  await run("测试对话", () => {}, { connection });
+  const reg = handled[0];
+  cases.push(["注册了 /pet 通道", reg?.channel === "/pet", handled.map((h) => h.channel)]);
+  // loopback：只信本机浏览器。写成 trusted-host 会把这个能拉起进程的接口
+  // 暴露给更宽的来源。
+  cases.push(["通道限定 loopback", reg?.options?.authority === "loopback", reg?.options]);
+  if (reg) {
+    const ok = await reg.handler("launch", {}, new AbortController().signal);
+    cases.push(["launch 返回成功", ok?.ok === true && typeof ok.value?.action === "string", ok]);
+    const bad = await reg.handler("nope", {}, new AbortController().signal);
+    cases.push(["未知 endpoint 返回错误而不是抛异常", bad?.ok === false, bad]);
+  }
+}
+
+// 没有 connection 服务（纯 CLI 的 DSH）时，插件照常工作、不报错。
+{
+  const got = await run("测试对话", finish);
+  cases.push(["没有网页端时插件照常播报", got.length === 1 && got[0].outcome === "success", got]);
 }
 
 // 子 agent 不该庆祝：一个任务内部派三个子 agent 会庆祝四次

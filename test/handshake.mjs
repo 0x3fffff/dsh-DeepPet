@@ -13,6 +13,9 @@ function makeCtx(logs, warns) {
     sessionTitle: { get: () => ({ title: "t" }) },
     credentials: { resolve: async () => ({ value: "sk", source: "env" }) },
     logger: { info: (m) => logs.push(String(m)), warn: (m) => warns.push(String(m)) },
+    // 纯 CLI 的 DSH：没有网页端的 connection 服务，回调不该被调用。
+    get: () => undefined,
+    inject: () => {},
   };
 }
 

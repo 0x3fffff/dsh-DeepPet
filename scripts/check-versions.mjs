@@ -13,6 +13,7 @@ const json = (...p) => JSON.parse(readFileSync(join(root, ...p), "utf8"));
 const plugin = json("plugin", "package.json");
 const platform = json("packages", "win32-x64", "package.json");
 const petPkg = json("pet", "package.json");
+const clientPkg = json("client", "package.json");
 const tauriConf = json("pet", "src-tauri", "tauri.conf.json");
 const cargo = readFileSync(join(root, "pet", "src-tauri", "Cargo.toml"), "utf8");
 const cargoVersion = cargo.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
@@ -22,6 +23,10 @@ const checks = [
   ["plugin/package.json version", expected],
   [`plugin/package.json optionalDependencies.${platform.name}`, plugin.optionalDependencies?.[platform.name]],
   ["packages/win32-x64/package.json version", platform.version],
+  // 网页端那半和 host 半靠 /pet 这个通道说话，两半必须同版本——
+  // 通道名或返回形状对不上时不会报错，只会静默失灵。
+  ["client/package.json version", clientPkg.version],
+  [`plugin/package.json dependencies.${clientPkg.name}`, plugin.dependencies?.[clientPkg.name]],
   ["pet/package.json version", petPkg.version],
   ["pet/src-tauri/tauri.conf.json version", tauriConf.version],
   ["pet/src-tauri/Cargo.toml version（决定握手上报的版本）", cargoVersion],
