@@ -99,6 +99,15 @@ function truncate(text, n) {
   return text.length > n ? `${text.slice(0, n - 1)}…` : text;
 }
 
+/**
+ * 不断行空格（U+00A0）。
+ *
+ * 气泡只有 180px 宽，长一点的串会折成两行。折在哪里很重要：断在
+ * 「🔧 正在执行 npm」/「命令」上，第二行只剩两个字，难看得很。用它把程序名
+ * 和后面的「命令」绑死，断点就只能落在前面那个普通空格上，两行都是完整词组。
+ */
+const NBSP = String.fromCharCode(160);
+
 function progressFromToolCall(name, argsJson) {
   let args = {};
   try { args = JSON.parse(argsJson) || {}; } catch {}
@@ -110,7 +119,7 @@ function progressFromToolCall(name, argsJson) {
   if (name === "think") return "🧠 思考中...";
   if (name === "bash" || name === "pwsh") {
     const prog = programName(args.command);
-    return prog ? `🔧 正在执行 ${truncate(prog, 14)} 命令` : "🔧 正在执行命令";
+    return prog ? `🔧 正在执行 ${truncate(prog, 14)}${NBSP}命令` : "🔧 正在执行命令";
   }
   return `⚙️ 正在使用 ${truncate(String(name ?? ""), 16)}`;
 }
@@ -154,6 +163,10 @@ function apply(ctx, config) {
   // 「完成」分支会变成关 DSH 时闪一下庆祝，比播报还糟。
   const suppressed = new Set();
   const helloTimers = new Set();
+  // 连续失败次数：桌宠据此换一池更沮丧的台词。计数在内存里，任一成功即清零，
+  // DSH 重启也清零——「昨天失败过三次」对今天的心情没有意义。
+  // 只数顶层 agent，和播报口径一致。
+  let failStreak = 0;
   let lastWorking = false;
   let child = null;
   let regFile = null;
@@ -319,7 +332,16 @@ function apply(ctx, config) {
     // 静默跳过会让「插件没反应」和「插件坏了」在用户眼里完全一样。
     // 不再下发 bubbleMs：气泡时长是桌宠的显示行为，归桌宠设置管
     // （一只桌宠服务多个 profile，各配一个时长说不清谁说了算）。
-    broadcast({ type: "task-complete", title: title ?? "", outcome, label: config.label });
+    if (outcome === "error") failStreak++;
+    else if (outcome === "success") failStreak = 0;
+    // 「已终止」既不算成功也不算失败：那是用户按的，不该清零也不该累加。
+    broadcast({
+      type: "task-complete",
+      title: title ?? "",
+      outcome,
+      label: config.label,
+      streak: failStreak,
+    });
   });
 
   async function sendBalance(ws) {

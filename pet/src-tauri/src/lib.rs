@@ -79,10 +79,14 @@ fn show_pet(win: WebviewWindow) {
 // 用户能直接查看编辑，也不会被清 WebView2 数据顺手抹掉。
 
 const SETTINGS_FILE: &str = "settings.json";
+/// 用户自定义台词；存在就整体替换内置的那份。
+const LINES_FILE: &str = "lines.json";
 
 fn default_style() -> String { "classic".into() }
 fn default_bubble_ms() -> u32 { 5000 }
 fn default_sound() -> bool { true }
+fn default_scale() -> f64 { 1.0 }
+fn default_lines() -> bool { true }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Settings {
@@ -92,6 +96,15 @@ struct Settings {
     bubble_ms: u32,
     #[serde(default = "default_sound")]
     sound: bool,
+    /// 桌宠大小倍率，1.0 = 屏幕短边 / 10。
+    #[serde(default = "default_scale")]
+    pet_scale: f64,
+    /// 气泡大小倍率：字号、内边距、圆角、最大宽度一起乘。
+    #[serde(default = "default_scale")]
+    bubble_scale: f64,
+    /// 台词：关掉就回到纯信息播报（「『标题』完成」）。
+    #[serde(default = "default_lines")]
+    lines: bool,
 }
 
 impl Default for Settings {
@@ -100,6 +113,9 @@ impl Default for Settings {
             bubble_style: default_style(),
             bubble_ms: default_bubble_ms(),
             sound: default_sound(),
+            pet_scale: default_scale(),
+            bubble_scale: default_scale(),
+            lines: default_lines(),
         }
     }
 }
@@ -122,8 +138,24 @@ fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String>
     let path = settings_path().ok_or("会合目录未就绪")?;
     let text = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     fs::write(path, text).map_err(|e| e.to_string())?;
+    // 倍率变了就得重算窗口。放在广播之前：前端收到 settings-changed 时
+    // 布局应当已经就位。
+    if let Some(win) = app.get_webview_window("pet") {
+        apply_size(&win, &settings);
+    }
     let _ = app.emit("settings-changed", &settings);
     Ok(())
+}
+
+/// 用户自定义台词。返回会合目录里 lines.json 的原文，没有就返回 None
+/// （前端退回内置的那份）。
+///
+/// 只回原文、不在这里解析：解析规则归前端一处所有，两边各写一遍迟早分家。
+/// 读坏了也当作没有——一份手写坏的台词文件不该让桌宠哑巴。
+#[tauri::command]
+fn get_lines() -> Option<String> {
+    let path = HOME.get()?.join(LINES_FILE);
+    fs::read_to_string(path).ok()
 }
 
 /// 按需创建设置窗口。桌宠窗口那一整套约束（透明、置顶、无边框、大部分穿透、
@@ -264,6 +296,80 @@ const SPRITE_H: f64 = 512.0;
 const HEADROOM: f64 = 150.0; // 气泡留白区高度
 const BUBBLE_MAX_W: f64 = 180.0; // 气泡最大宽度
 
+/// 动作视频的原生高度（`assets/动作清单.json` 那条流水线的产物尺寸）。
+/// 桌宠放到比它还大就是在放大视频，边缘会发虚——所以倍率上限按它封顶。
+const ACTION_NATIVE_H: f64 = 384.0;
+/// 倍率的硬边界。上限还会被 ACTION_NATIVE_H 进一步压低（4K 屏上约 1.78）。
+const MIN_SCALE: f64 = 0.5;
+const MAX_SCALE: f64 = 2.0;
+const MAX_BUBBLE_SCALE: f64 = 2.0;
+
+/// 一次布局解算的全部结果，物理像素。
+struct Layout {
+    win_w: u32,
+    win_h: u32,
+    sprite_w: f64,
+    sprite_h: f64,
+    scale: f64,
+}
+
+/// 100% 时的立绘高度（物理像素）。
+fn base_sprite_h(monitor_w: u32, monitor_h: u32) -> f64 {
+    (monitor_w.min(monitor_h) as f64 / 10.0).round().max(1.0)
+}
+
+/// 桌宠倍率的上限：不超过 2.0，也不让立绘高过动作视频的原生高度。
+///
+/// 只有 4K 以上的屏会真的被这一条压到 2.0 以下（2160/10 = 216，384/216 ≈ 1.78）。
+/// 封顶而不是允许放大，是因为超出之后画面会发虚，而那是个用户看得见、
+/// 却不知道为什么的退化。
+fn max_pet_scale(monitor_w: u32, monitor_h: u32) -> f64 {
+    let base = base_sprite_h(monitor_w, monitor_h);
+    (ACTION_NATIVE_H / base).min(MAX_SCALE).max(MIN_SCALE)
+}
+
+fn solve_layout(monitor_w: u32, monitor_h: u32, scale: f64, settings: &Settings) -> Layout {
+    let pet = settings
+        .pet_scale
+        .clamp(MIN_SCALE, max_pet_scale(monitor_w, monitor_h));
+    let bubble = settings.bubble_scale.clamp(MIN_SCALE, MAX_BUBBLE_SCALE);
+    let sprite_h = (base_sprite_h(monitor_w, monitor_h) * pet).round().max(1.0);
+    let sprite_w = (sprite_h * SPRITE_W / SPRITE_H).round().max(1.0);
+    // 气泡留白区和气泡最大宽度都跟着气泡倍率走——否则调大气泡之后，两行的
+    // 气泡会顶出窗口上沿被裁掉。
+    let headroom = (HEADROOM * bubble * scale).round().max(1.0);
+    let bubble_w = (BUBBLE_MAX_W * bubble * scale).round().max(1.0);
+    Layout {
+        win_w: sprite_w.max(bubble_w) as u32,
+        win_h: (sprite_h + headroom) as u32,
+        sprite_w,
+        sprite_h,
+        scale,
+    }
+}
+
+/// 只重算窗口尺寸、不写盘。
+///
+/// 拖滑块时要实时看到效果，但一次拖动会产生几十次 input 事件——每次都写一遍
+/// settings.json 又蠢又慢。所以拖动中走这个，松手才走 set_settings 落盘。
+#[tauri::command]
+fn preview_size(app: tauri::AppHandle, settings: Settings) {
+    if let Some(win) = app.get_webview_window("pet") {
+        apply_size(&win, &settings);
+    }
+}
+
+/// 桌宠倍率的可用上限，供设置面板把滑块量程调对。
+#[tauri::command]
+fn size_limits(app: tauri::AppHandle) -> (f64, f64, f64) {
+    let cap = app
+        .get_webview_window("pet")
+        .and_then(|w| w.primary_monitor().ok().flatten())
+        .map(|m| max_pet_scale(m.size().width, m.size().height))
+        .unwrap_or(MAX_SCALE);
+    (MIN_SCALE, cap, MAX_BUBBLE_SCALE)
+}
+
 // 鼠标穿透轮询。窗口大部分面积是全透明的留白区，整窗吃点击的话桌宠飘到
 // 哪就挡住哪，所以默认让整窗穿透，只在光标落进命中区时切回可交互。
 const POLL_MS: u64 = 30;
@@ -309,11 +415,61 @@ struct InitInfo {
     bubble_max_w: f64,
 }
 
-static INIT: OnceLock<InitInfo> = OnceLock::new();
+/// 尺寸不再是启动时一次性定死的（设置里可以调倍率），所以这里是 Mutex
+/// 而不是 OnceLock——OnceLock 写不了第二次。
+static INIT: OnceLock<Mutex<Option<InitInfo>>> = OnceLock::new();
+
+fn init_slot() -> &'static Mutex<Option<InitInfo>> {
+    INIT.get_or_init(|| Mutex::new(None))
+}
 
 #[tauri::command]
 fn get_init() -> Result<InitInfo, String> {
-    INIT.get().cloned().ok_or_else(|| "init info not ready".to_string())
+    init_slot()
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .ok_or_else(|| "init info not ready".to_string())
+}
+
+/**
+ * 按当前设置重算桌宠窗口尺寸，并把新的布局广播给前端。
+ *
+ * 缩放时**固定脚底和水平中心**：窗口默认是钉住左上角长大的，那会让桌宠往下
+ * 沉——本来站在屏幕底部的话直接沉出屏幕。锚在脚底才读作「她长大了」而不是
+ * 「她挪位了」。贴边状态下的重新对齐和越界回收交给前端，那边才知道贴的是哪边。
+ */
+fn apply_size(win: &WebviewWindow, settings: &Settings) {
+    let Ok(Some(monitor)) = win.primary_monitor() else { return };
+    let scale = monitor.scale_factor();
+    let m = monitor.size();
+    let layout = solve_layout(m.width, m.height, scale, settings);
+
+    if let (Ok(pos), Ok(old)) = (win.outer_position(), win.outer_size()) {
+        let _ = win.set_size(PhysicalSize::new(layout.win_w, layout.win_h));
+        let dx = (old.width as f64 - layout.win_w as f64) / 2.0;
+        let dy = old.height as f64 - layout.win_h as f64;
+        let _ = win.set_position(tauri::PhysicalPosition::new(
+            (pos.x as f64 + dx).round() as i32,
+            (pos.y as f64 + dy).round() as i32,
+        ));
+    } else {
+        let _ = win.set_size(PhysicalSize::new(layout.win_w, layout.win_h));
+    }
+
+    let info = InitInfo {
+        ws_url: std::env::var("DSH_PET_WS_URL").unwrap_or_default(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        debug: std::env::var("DSH_PET_DEBUG").is_ok(),
+        sprite_w: layout.sprite_w / layout.scale,
+        sprite_h: layout.sprite_h / layout.scale,
+        headroom: HEADROOM * settings.bubble_scale,
+        bubble_max_w: BUBBLE_MAX_W * settings.bubble_scale,
+    };
+    if let Ok(mut guard) = init_slot().lock() {
+        *guard = Some(info.clone());
+    }
+    let _ = win.emit("layout-changed", info);
 }
 
 /// 前端上报交互状态：平时给立绘包围盒，拖动中或菜单打开时 `force = true`。
@@ -324,20 +480,115 @@ fn set_hit(force: bool, rects: Vec<Rect>) {
     }
 }
 
+// 命中测试轮询用的 Win32 直调。
+//
+// 原来这里用的是 `win.scale_factor()` / `win.inner_position()` /
+// `win.cursor_position()`——它们在 Tauri 里全是 `window_getter!` 宏：**往主
+// 事件循环投一条消息，然后阻塞等回复**。轮询是 30ms 一次，于是每秒对主线程
+// 发起 100 次阻塞往返，而主线程同时还在给 WebView2 合成带 alpha 的视频。
+// 一堵，穿透状态就切不回来——那一瞬点下去落到背后的窗口，感觉就是「要点两下」。
+//
+// 这几个都是纯 Win32 查询，直接调没有任何跨线程代价。
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct WinPoint {
+    x: i32,
+    y: i32,
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct WinRect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+extern "system" {
+    fn GetCursorPos(p: *mut WinPoint) -> i32;
+    fn GetClientRect(hwnd: isize, r: *mut WinRect) -> i32;
+    fn ClientToScreen(hwnd: isize, p: *mut WinPoint) -> i32;
+    fn GetDpiForWindow(hwnd: isize) -> u32;
+}
+
+/// 客户区左上角的屏幕坐标（物理像素），等价于 `inner_position()`。
+/// 用 GetClientRect + ClientToScreen 而不是 GetWindowRect：后者在有非客户区
+/// 时会差一圈，虽然本窗口无边框，但这样写不依赖那个前提。
+fn client_origin(hwnd: isize) -> Option<(i32, i32)> {
+    unsafe {
+        let mut rc = WinRect::default();
+        if GetClientRect(hwnd, &mut rc) == 0 {
+            return None;
+        }
+        let mut p = WinPoint { x: rc.left, y: rc.top };
+        if ClientToScreen(hwnd, &mut p) == 0 {
+            return None;
+        }
+        Some((p.x, p.y))
+    }
+}
+
+/// 轮询线程最近一次判定的全部输入与结论，仅供调试通道读取。
+/// 「翻转有时不发生」这种问题，光看外部现象分不清是判定错了、还是判定对了
+/// 但没生效——把中间量摊开才不用猜。
+#[derive(Clone, Default, Serialize)]
+struct HitDebug {
+    cursor_x: f64,
+    cursor_y: f64,
+    origin_x: i32,
+    origin_y: i32,
+    scale: f64,
+    rects: usize,
+    force: bool,
+    inside: bool,
+    /// 轮询决定的目标状态；`applied` 是应用线程真正设下去的那个。
+    want: bool,
+    applied: i32,
+    ticks: u64,
+}
+
+static HIT_DEBUG: OnceLock<Mutex<HitDebug>> = OnceLock::new();
+
+fn hit_debug() -> &'static Mutex<HitDebug> {
+    HIT_DEBUG.get_or_init(|| Mutex::new(HitDebug::default()))
+}
+
+#[tauri::command]
+fn get_hit_debug() -> HitDebug {
+    hit_debug().lock().map(|g| g.clone()).unwrap_or_default()
+}
+
 /// 光标是否落在命中区外——是则整窗应当穿透。`None` 表示这一轮无法判断。
-fn should_ignore(win: &WebviewWindow) -> Option<bool> {
-    let guard = hit_state().lock().ok()?;
-    let state = guard.as_ref()?;
-    if state.force {
+fn should_ignore(hwnd: isize) -> Option<bool> {
+    // 先把要用的东西拷出来，**立刻放锁**。
+    //
+    // 原来这里是拿着锁一路算到底，而中间那三个 Tauri getter 会阻塞等主线程
+    // 回话——于是「持锁 + 等主线程」和「主线程侧的 set_hit 等锁」凑成一个环，
+    // 主线程一停就是好几秒（IsHungAppWindow 实测为 true）。
+    // 即便现在改成了纯 Win32 查询、不再等主线程，这个锁也不该跨任何可能阻塞的
+    // 调用——这是个结构约束，不是当下能不能跑通的问题。
+    let (force, rects) = {
+        let guard = hit_state().lock().ok()?;
+        let state = guard.as_ref()?;
+        (state.force, state.rects.clone())
+    };
+    if force {
         return Some(false); // 拖动/菜单期间无条件可交互
     }
-    let rects = &state.rects;
-    let scale = win.scale_factor().ok()?;
-    let origin = win.inner_position().ok()?;
-    let cursor = win.cursor_position().ok()?;
+    let rects = &rects;
+    // DPI 每次现查：它只是一次 user32 调用，这样跨屏拖到不同缩放的显示器上
+    // 也不用额外做什么。
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let scale = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
+    let origin = client_origin(hwnd)?;
+    let mut cursor = WinPoint::default();
+    if unsafe { GetCursorPos(&mut cursor) } == 0 {
+        return None;
+    }
     // 光标与窗口原点都是物理像素；命中区是逻辑像素，乘 scale 对齐。
-    let rx = cursor.x - origin.x as f64;
-    let ry = cursor.y - origin.y as f64;
+    let rx = cursor.x as f64 - origin.0 as f64;
+    let ry = cursor.y as f64 - origin.1 as f64;
     let pad = HIT_PADDING * scale; // 和其余布局常量一样按逻辑像素定义
     let inside = rects.iter().any(|r| {
         let x = r.x * scale - pad;
@@ -346,19 +597,61 @@ fn should_ignore(win: &WebviewWindow) -> Option<bool> {
         let h = r.h * scale + pad * 2.0;
         rx >= x && rx <= x + w && ry >= y && ry <= y + h
     });
+    if let Ok(mut d) = hit_debug().lock() {
+        d.cursor_x = cursor.x as f64;
+        d.cursor_y = cursor.y as f64;
+        d.origin_x = origin.0;
+        d.origin_y = origin.1;
+        d.scale = scale;
+        d.rects = rects.len();
+        d.force = false;
+        d.inside = inside;
+        d.want = !inside;
+        d.ticks += 1;
+    }
     Some(!inside)
 }
 
 /// 轮询光标位置，只在状态翻转时才调一次 set_ignore_cursor_events。
 /// 窗口关闭后 Tauri 会退出进程，这个后台线程随之消失。
 fn spawn_hit_test(win: WebviewWindow) {
+    // HWND 只取一次。`hwnd()` 本身也是一次事件循环往返，放进循环就前功尽弃了。
+    let Ok(hwnd) = win.hwnd() else { return };
+    let hwnd = hwnd.0 as isize;
+
+    // 检测和翻转拆成两个线程。
+    //
+    // 翻转这一步绕不开属主线程：`set_ignore_cursor_events` 是主线程往返，而
+    // 绕过 Tauri 直接 `SetWindowLongPtrW` 也一样——那是别的线程拥有的窗口，
+    // 改扩展样式仍要和属主线程同步。实测直接写反而更糟：前 3 次翻转正常，
+    // 之后轮询线程就卡死在那一句里，窗口永远停在穿透态（12 轮超时 9 轮）。
+    //
+    // 既然躲不开，就别让它挡住**检测**。轮询线程只负责判断并把结果丢给通道，
+    // 一次都不会阻塞；专职线程去做那次可能很慢的翻转。最坏情况是翻转晚到，
+    // 而不是整条链路停摆。
+    let (tx, rx) = std::sync::mpsc::channel::<bool>();
     std::thread::spawn(move || {
-        let mut current: Option<bool> = None;
-        loop {
-            std::thread::sleep(Duration::from_millis(POLL_MS));
-            let Some(want) = should_ignore(&win) else { continue };
-            if current != Some(want) && win.set_ignore_cursor_events(want).is_ok() {
-                current = Some(want);
+        let mut applied: Option<bool> = None;
+        while let Ok(mut want) = rx.recv() {
+            // 排空积压，只认最新的那个——阻塞期间攒下的中间状态没有意义。
+            while let Ok(newer) = rx.try_recv() {
+                want = newer;
+            }
+            if applied != Some(want) && win.set_ignore_cursor_events(want).is_ok() {
+                applied = Some(want);
+                if let Ok(mut d) = hit_debug().lock() {
+                    d.applied = if want { 1 } else { 0 };
+                }
+            }
+        }
+    });
+
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(POLL_MS));
+        // 这个循环里没有一处会等主线程：三个查询都是纯 Win32，send 不阻塞。
+        if let Some(want) = should_ignore(hwnd) {
+            if tx.send(want).is_err() {
+                return; // 应用线程没了，再判也没意义
             }
         }
     });
@@ -378,29 +671,9 @@ pub fn run() {
             }
             let _ = HOME.set(home);
 
-            // 桌宠高度 = 屏幕短边 / 10；窗口 = 本体 + 上方气泡留白区。
+            // 桌宠高度 = 屏幕短边 / 10 × 倍率；窗口 = 本体 + 上方气泡留白区。
             if let Some(win) = app.get_webview_window("pet") {
-                if let Ok(Some(monitor)) = win.primary_monitor() {
-                    let scale = monitor.scale_factor();
-                    let size = monitor.size();
-                    let short = size.width.min(size.height) as f64;
-                    let sprite_h = (short / 10.0).round().max(1.0);
-                    let sprite_w = (sprite_h * SPRITE_W / SPRITE_H).round().max(1.0);
-                    let headroom = (HEADROOM * scale).round().max(1.0);
-                    let bubble_w = (BUBBLE_MAX_W * scale).round().max(1.0);
-                    let win_w = sprite_w.max(bubble_w) as u32;
-                    let win_h = (sprite_h + headroom) as u32;
-                    let _ = win.set_size(PhysicalSize::new(win_w, win_h));
-                    let _ = INIT.set(InitInfo {
-                        ws_url: std::env::var("DSH_PET_WS_URL").unwrap_or_default(),
-                        version: env!("CARGO_PKG_VERSION").to_string(),
-                        debug: std::env::var("DSH_PET_DEBUG").is_ok(),
-                        sprite_w: sprite_w / scale,
-                        sprite_h: sprite_h / scale,
-                        headroom: HEADROOM,
-                        bubble_max_w: BUBBLE_MAX_W,
-                    });
-                }
+                apply_size(&win, &get_settings());
                 spawn_hit_test(win);
             }
             Ok(())
@@ -408,7 +681,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_init, set_hit, list_plugins, show_pet,
             get_settings, set_settings, open_settings, reset_position, quit_pet,
-            system_idle_ms, open_test, pet_test, pet_trace, set_trace
+            system_idle_ms, open_test, pet_test, pet_trace, set_trace, size_limits, preview_size,
+            get_hit_debug, get_lines
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

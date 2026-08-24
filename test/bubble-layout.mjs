@@ -21,19 +21,24 @@ push("边距 = (窗口 - 立绘) / 2", near(edgeInset(INNER, SPRITE), 49.5), edg
 push("立绘宽未知时边距为 0", edgeInset(INNER, 0) === 0 && edgeInset(INNER, -5) === 0);
 
 {
-  const none = visibleBand(INNER, SPRITE, null);
-  const left = visibleBand(INNER, SPRITE, "left");
-  const right = visibleBand(INNER, SPRITE, "right");
+  const none = visibleBand(INNER, SPRITE, null, MARGIN);
+  const left = visibleBand(INNER, SPRITE, "left", MARGIN);
+  const right = visibleBand(INNER, SPRITE, "right", MARGIN);
   push("不贴边时整窗可见", none.lo === 0 && none.hi === INNER, none);
-  push("贴左时左侧 49.5 悬出屏幕", near(left.lo, 49.5) && left.hi === INNER, left);
-  push("贴右时右侧 49.5 悬出屏幕", left.lo + right.hi === INNER && right.lo === 0, right);
+  push("贴左时左侧 49.5 悬出屏幕", near(left.lo, 49.5 + MARGIN) && left.hi === INNER, left);
+  push("贴右时右侧 49.5 悬出屏幕", near(right.hi, INNER - 49.5 - MARGIN) && right.lo === 0, right);
+  // 边距只扣在被屏幕边裁掉的那一侧。两侧都扣的话不贴边时白少 12px，
+  // 「🔧 正在执行 npm 命令」这类刚好 162 的串就会被挤成两行。
+  push("不贴边时不扣边距（可用宽度就是整窗）", bandWidth(none.lo, none.hi) === INNER, none);
+  push("贴边时只扣一侧", near(bandWidth(left.lo, left.hi), INNER - 49.5 - MARGIN),
+    bandWidth(left.lo, left.hi));
 }
 
 // 不变量：短气泡不该动，尖角正对立绘。这是最常见的情形，动一下都是退步。
 for (const edge of [null, "left", "right"]) {
-  const { lo, hi } = visibleBand(INNER, SPRITE, edge);
+  const { lo, hi } = visibleBand(INNER, SPRITE, edge, MARGIN);
   const { shift, tail } = bubbleOffsets({
-    inner: INNER, lo, hi, width: 60, margin: MARGIN, tailInset: TAIL_INSET,
+    inner: INNER, lo, hi, width: 60, tailInset: TAIL_INSET,
   });
   push(`短气泡在 ${edge ?? "不贴边"} 时保持居中`, shift === 0 && tail === 0, { shift, tail });
 }
@@ -46,12 +51,12 @@ for (const edge of [null, "left", "right"]) {
   for (const inner of [140, 180, 220, 360]) {
     for (const sprite of [0, 40, 81, 120, inner]) {
       for (const edge of [null, "left", "right"]) {
-        const { lo, hi } = visibleBand(inner, sprite, edge);
-        const maxW = Math.min(inner, bandWidth(lo, hi, MARGIN));
+        const { lo, hi } = visibleBand(inner, sprite, edge, MARGIN);
+        const maxW = Math.min(inner, bandWidth(lo, hi));
         // 从很窄到刚好顶满带宽，逐档取样。
         for (let w = 8; w <= maxW; w += 3) {
           const { shift, tail } = bubbleOffsets({
-            inner, lo, hi, width: w, margin: MARGIN, tailInset: TAIL_INSET,
+            inner, lo, hi, width: w, tailInset: TAIL_INSET,
           });
           const c = inner / 2 + shift;
           // 允许 1e-9 的浮点尘埃，但不允许真的越界。
@@ -69,13 +74,13 @@ for (const edge of [null, "left", "right"]) {
 
 // 顶满带宽的气泡必须真的被推进带内——这正是没修之前被屏幕边裁掉的那一档。
 {
-  const { lo, hi } = visibleBand(INNER, SPRITE, "right");
-  const w = bandWidth(lo, hi, MARGIN); // 118.5
+  const { lo, hi } = visibleBand(INNER, SPRITE, "right", MARGIN);
+  const w = bandWidth(lo, hi); // 124.5
   const { shift, tail } = bubbleOffsets({
-    inner: INNER, lo, hi, width: w, margin: MARGIN, tailInset: TAIL_INSET,
+    inner: INNER, lo, hi, width: w, tailInset: TAIL_INSET,
   });
   const rightEdge = INNER / 2 + shift + w / 2;
-  push("顶满带宽时贴着可见带右界", near(rightEdge, hi - MARGIN), { shift, rightEdge, hi });
+  push("顶满带宽时贴着可见带右界", near(rightEdge, hi), { shift, rightEdge, hi });
   // 尖角要挪回立绘中心，且此时它必须还在气泡里（否则修复本身就白做了）。
   push("顶满带宽时尖角仍指着立绘", near(tail, -shift) && Math.abs(tail) <= w / 2 - TAIL_INSET,
     { tail, shift, limit: w / 2 - TAIL_INSET });

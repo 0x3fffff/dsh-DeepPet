@@ -4,6 +4,9 @@ interface Settings {
   bubble_style: string;
   bubble_ms: number;
   sound: boolean;
+  pet_scale: number;
+  bubble_scale: number;
+  lines: boolean;
 }
 
 /**
@@ -24,9 +27,18 @@ const stylesEl = document.getElementById("styles") as HTMLElement;
 const bubbleMsEl = document.getElementById("bubbleMs") as HTMLInputElement;
 const bubbleMsLabel = document.getElementById("bubbleMsLabel") as HTMLOutputElement;
 const soundEl = document.getElementById("sound") as HTMLInputElement;
+const linesEl = document.getElementById("lines") as HTMLInputElement;
 const statusEl = document.getElementById("status") as HTMLElement;
+const petScaleEl = document.getElementById("petScale") as HTMLInputElement;
+const petScaleLabel = document.getElementById("petScaleLabel") as HTMLOutputElement;
+const bubbleScaleEl = document.getElementById("bubbleScale") as HTMLInputElement;
+const bubbleScaleLabel = document.getElementById("bubbleScaleLabel") as HTMLOutputElement;
+const scaleHintEl = document.getElementById("scaleHint") as HTMLElement;
 
-let settings: Settings = { bubble_style: "classic", bubble_ms: 5000, sound: true };
+let settings: Settings = {
+  bubble_style: "classic", bubble_ms: 5000, sound: true,
+  pet_scale: 1, bubble_scale: 1, lines: true,
+};
 let statusTimer: number | undefined;
 
 function note(text: string) {
@@ -73,6 +85,30 @@ function renderStyles() {
   }
 }
 
+function renderScales() {
+  petScaleEl.value = String(Math.round(settings.pet_scale * 100));
+  bubbleScaleEl.value = String(Math.round(settings.bubble_scale * 100));
+  petScaleLabel.textContent = `${petScaleEl.value}%`;
+  bubbleScaleLabel.textContent = `${bubbleScaleEl.value}%`;
+  // 气泡预览也跟着倍率走——预览和真实气泡用的是同一份 CSS，这里不同步的话
+  // 「所见」和「所得」当场就分家了。
+  stylesEl.style.setProperty("--bubble-scale", String(settings.bubble_scale));
+}
+
+/** 拖动中只预览、不写盘：一次拖动几十次 input，每次都写文件又蠢又慢。 */
+function previewSize() {
+  void invoke("preview_size", { settings }).catch(() => {});
+}
+
+for (const [el, key] of [[petScaleEl, "pet_scale"], [bubbleScaleEl, "bubble_scale"]] as const) {
+  el.addEventListener("input", () => {
+    settings[key] = Number(el.value) / 100;
+    renderScales();
+    previewSize();
+  });
+  el.addEventListener("change", () => { void save(); });
+}
+
 function renderBubbleMs() {
   bubbleMsEl.value = String(settings.bubble_ms);
   bubbleMsLabel.textContent = `${(settings.bubble_ms / 1000).toFixed(1)} 秒`;
@@ -87,6 +123,11 @@ bubbleMsEl.addEventListener("change", () => { void save(); });
 
 soundEl.addEventListener("change", () => {
   settings.sound = soundEl.checked;
+  void save();
+});
+
+linesEl.addEventListener("change", () => {
+  settings.lines = linesEl.checked;
   void save();
 });
 
@@ -105,9 +146,27 @@ async function init() {
   } catch {
     note("读取设置失败，显示的是默认值");
   }
+  // 上限跟屏幕走：桌宠放到比动作视频原生高度还大就会发虚，所以按素材封顶。
+  // 只有 4K 以上会真的被压到 200% 以下——不说明的话那个滑块看起来就是坏的。
+  try {
+    const [min, maxPet, maxBubble] = await invoke<[number, number, number]>("size_limits");
+    petScaleEl.min = String(Math.round(min * 100));
+    bubbleScaleEl.min = String(Math.round(min * 100));
+    petScaleEl.max = String(Math.floor(maxPet * 100));
+    bubbleScaleEl.max = String(Math.round(maxBubble * 100));
+    if (maxPet < 1.99) {
+      scaleHintEl.textContent =
+        `拖动时桌宠实时跟着变，松手才保存。这块屏幕上桌宠最大 ${Math.floor(maxPet * 100)}%`
+        + "——再大就超出动作素材的原生分辨率，画面会发虚。";
+    }
+  } catch {
+    // 拿不到上限就用 HTML 里写的默认量程，不至于没法调。
+  }
   renderStyles();
   renderBubbleMs();
+  renderScales();
   soundEl.checked = settings.sound;
+  linesEl.checked = settings.lines;
 }
 
 void init();

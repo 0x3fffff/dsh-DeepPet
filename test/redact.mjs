@@ -42,7 +42,20 @@ no("完整路径不泄露",
 
 // 正常文案
 eq("修改文件", progressFromToolCall("edit", JSON.stringify({ file_path: "src/main.ts" })), "🧑‍💻 正在修改 main.ts");
-eq("执行命令", progressFromToolCall("bash", JSON.stringify({ command: "npm test" })), "🔧 正在执行 npm 命令");
+
+// 程序名和「命令」之间是**不断行空格**（U+00A0），不是普通空格：气泡只有
+// 180px 宽，断在这里会让第二行只剩「命令」两个字。用 fromCharCode 构造而不是
+// 写字面量——不断行空格和普通空格在编辑器里长得一模一样，写错了没人看得出来。
+const NBSP = String.fromCharCode(160);
+eq("执行命令", progressFromToolCall("bash", JSON.stringify({ command: "npm test" })),
+  `🔧 正在执行 npm${NBSP}命令`);
+{
+  const got = progressFromToolCall("bash", JSON.stringify({ command: "npm test" }));
+  // 单独钉一条：光比字符串的话，改回普通空格后**期望值也会跟着改**，
+  // 这条断言就白设了。这里直接查那个码点。
+  cases.push(["程序名后面接的是不断行空格", got.includes(`npm${NBSP}命令`),
+    [...got].map((c) => c.codePointAt(0).toString(16)).join(" ")]);
+}
 eq("未知工具", progressFromToolCall("grep_files", "{}"), "⚙️ 正在使用 grep_files");
 eq("参数不是 JSON 也不崩", progressFromToolCall("bash", "not json"), "🔧 正在执行命令");
 

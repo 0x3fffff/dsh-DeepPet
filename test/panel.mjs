@@ -10,6 +10,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 
+import { skipIfPetRunning, waitForPet } from "./lib/wait-pet.mjs";
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const exe = process.env.DSH_PET_BINARY
   || join(root, "packages", "win32-x64", "bin", "dsh-deep-pet.exe");
@@ -22,6 +24,9 @@ if (!existsSync(exe)) {
   console.log("SKIP: 未找到已入包的桌宠二进制；先跑 scripts/stage-binary.mjs");
   process.exit(0);
 }
+
+// 已经有一只桌宠在跑的话，这里拉起的那只会抢不到单例锁而立刻自杀。
+skipIfPetRunning();
 
 const outDir = process.env.DSH_PET_SHOT_DIR || join(root, "test", ".shots");
 mkdirSync(outDir, { recursive: true });
@@ -55,7 +60,7 @@ function ps(script, args) {
 
 const cases = [];
 try {
-  const ws = await Promise.race([connected, timeout(15000, "桌宠未连上")]);
+  const ws = await waitForPet(pet, connected);
   await sleep(1500);
   ws.send(JSON.stringify({ type: "debug-test", payload: { cmd: "open-test" } }));
   await sleep(3500); // WebView2 冷启动比窗口出现慢得多

@@ -18,6 +18,8 @@ const FPS = 12;
 // 动作库：由 assets/动作清单.json 驱动，构建时转成 WebM（VP9+alpha）并产出
 // /动作/index.json。加动作只改清单，**不动这里的代码**。
 const ACTION_INDEX = "/动作/index.json";
+const LINES_URL = "/台词.json";
+const faceUrl = (name: string) => `/立绘/表情/${name}.webp`;
 const actionUrl = (id: string) => `/动作/${id}.webm`;
 const holdUrl = (id: string) => `/动作/${id}-hold.webp`;
 
@@ -43,6 +45,17 @@ const IDLE_POLL_MS = 5_000;
 const IDLE_POLL_FAST_MS = 1_000;
 // 进入工作态的防抖：半秒就结束的任务不该闪一下打字入场再跳走。
 const WORKING_DEBOUNCE_MS = 800;
+// 开场白的冷却。完成/出错每次都说（那本来就是你要的反馈），开场白不行——
+// 连着跑 20 个小任务就是 20 句「交给我吧」，那是纯噪音。
+const START_LINE_COOLDOWN_MS = 3 * 60_000;
+// 「这个有点难」的判据：干了这么久、或者折腾了这么多次工具调用。
+// 开始那一刻是判断不出难易的（那时只有一个 running 状态），只能中途看。
+const LONG_TASK_MS = 90_000;
+const LONG_TASK_TOOLS = 12;
+// 按工具调用次数触发时的下限：十几个飞快的调用只说明活儿碎，不说明难。
+const LONG_TASK_MIN_MS = 15_000;
+// 台词自己也占气泡，给它一段固定时长（比进度气泡长，比播报短）。
+const LINE_SHOW_MS = 4_000;
 // 进度气泡的节律：亮一下、歇一会，不常驻占着屏幕。冷却曾经是 5s，叠上
 // 插件侧 6s 的 todo 遮蔽后，一个 turn 里最靠前的那几个工具调用（think、
 // pwsh 之类）会整个落进盲区，一条都看不到。收紧到这个量级后绝大部分调用
@@ -93,11 +106,20 @@ interface Settings {
   bubble_style: string;
   bubble_ms: number;
   sound: boolean;
+  pet_scale: number;
+  bubble_scale: number;
+  lines: boolean;
 }
-let settings: Settings = { bubble_style: "classic", bubble_ms: 5000, sound: true };
+let settings: Settings = {
+  bubble_style: "classic", bubble_ms: 5000, sound: true,
+  pet_scale: 1, bubble_scale: 1, lines: true,
+};
 
 function applySettings() {
   bubble.dataset.style = settings.bubble_style;
+  // 字号、内边距、圆角、尖角全挂在这一个变量上（见 bubble.css），
+  // 所以整体缩放只需要写这一处。最大宽度由 Rust 随 InitInfo 一起下发。
+  bubble.style.setProperty("--bubble-scale", String(settings.bubble_scale || 1));
   layoutBubble();
 }
 
@@ -135,6 +157,58 @@ function pick(pool: string, avoid?: string): ActionDef | undefined {
 }
 
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
+
+// ---- 台词库 ----
+// 数据不是代码：加一句只改 assets/台词.json。用户还能把它复制到会合目录
+// 改称呼和口味——发给社区之后「主人」这个称呼肯定有人想换，与其我内置好几套
+// 语气去猜别人的口味，不如让他们自己写。
+interface Line {
+  t: string;
+  face: string;
+}
+
+type LinePool = "done" | "error" | "canceled" | "start" | "long" | "streak";
+
+const lines = new Map<LinePool, Line[]>();
+// 每池上一句，用来避免连着抽到同一句——池子再大，连说两遍同一句也很出戏。
+const lastLine = new Map<LinePool, string>();
+
+async function loadLines() {
+  try {
+    // 用户自定义优先。整体替换而不是逐池合并——合并的话「我只想改完成那一池」
+    // 和「我想删掉某几句」会得到完全不同的直觉，说不清楚。
+    let data: unknown = null;
+    try {
+      const custom = await invoke<string | null>("get_lines");
+      if (custom) data = JSON.parse(custom);
+    } catch {
+      // 用户那份写坏了就当没有，退回内置的。
+    }
+    if (!data) data = await (await fetch(LINES_URL)).json();
+    const src = data as Record<string, unknown>;
+    for (const pool of ["done", "error", "canceled", "start", "long", "streak"] as LinePool[]) {
+      const arr = Array.isArray(src?.[pool]) ? (src[pool] as unknown[]) : [];
+      const clean = arr.filter((x: unknown): x is Line =>
+        !!x && typeof (x as Line).t === "string" && typeof (x as Line).face === "string");
+      if (clean.length) lines.set(pool, clean);
+    }
+  } catch {
+    // 台词库缺失或写坏了都退化成不说话，而不是让桌宠起不来。
+    // test/lines.mjs 会在构建期把引用错误挡住。
+  }
+}
+
+/** 从台词池里抽一句，尽量不连着抽到同一句。台词关掉或池为空时返回 null。 */
+function pickLine(pool: LinePool): Line | null {
+  if (!settings.lines) return null;
+  const all = lines.get(pool);
+  if (!all || !all.length) return null;
+  const avoid = lastLine.get(pool);
+  const candidates = all.length > 1 && avoid ? all.filter((l) => l.t !== avoid) : all;
+  const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+  lastLine.set(pool, chosen.t);
+  return chosen;
+}
 
 // ---- 播放通道 ----
 // 静图走 <img>，动作走两个轮换的 <video>。
@@ -457,21 +531,33 @@ let bubbleMaxW = 180;
 function layoutBubble() {
   const inner = window.innerWidth;
   if (!inner) return;
-  const { lo, hi } = visibleBand(inner, spriteWLogical, st.edge);
+  // 边距只扣在贴边那一侧（见 bubble-layout.js）。两侧都扣的话不贴边时白少
+  // 12px，刚好卡在上限附近的串会被挤成两行。
+  const { lo, hi } = visibleBand(inner, spriteWLogical, st.edge, BUBBLE_EDGE_MARGIN);
   // 先压 max-width，再量实际宽度——顺序反了就会拿旧宽度去算位移。
-  bubble.style.maxWidth = `${Math.min(bubbleMaxW, bandWidth(lo, hi, BUBBLE_EDGE_MARGIN))}px`;
+  bubble.style.maxWidth = `${Math.min(bubbleMaxW, bandWidth(lo, hi))}px`;
   const { shift, tail } = bubbleOffsets({
     inner, lo, hi,
     width: bubble.offsetWidth,
-    margin: BUBBLE_EDGE_MARGIN,
     tailInset: TAIL_INSET,
   });
   bubble.style.setProperty("--shift", `${shift.toFixed(1)}px`);
   bubble.style.setProperty("--tail-shift", `${tail.toFixed(1)}px`);
 }
 
-function showBubble(text: string, ms: number) {
-  bubble.textContent = text;
+function showBubble(text: string, ms: number, sub?: string) {
+  bubble.textContent = "";
+  // 逐段 textContent，**不拼 innerHTML**：副行是会话标题，由模型生成，
+  // 拼 HTML 等于把它当标记解释。
+  const main = document.createElement("div");
+  main.textContent = text;
+  bubble.append(main);
+  if (sub) {
+    const el = document.createElement("div");
+    el.className = "sub";
+    el.textContent = sub;
+    bubble.append(el);
+  }
   layoutBubble(); // 宽度随内容变，位移和尖角得按这一条的实际宽度重算
   bubble.classList.add("show");
   if (bubbleTimer !== undefined) window.clearTimeout(bubbleTimer);
@@ -504,9 +590,26 @@ interface Burst {
   canceledTitle: string | null;
   canceledLabel: string;
   soundPlayed: boolean;
+  /** 连续失败次数，由插件下发。1 表示这是第一次栽。 */
+  streak: number;
+  /**
+   * 这一轮播报抽中的台词。**必须在决定身体之前抽**：身体（表情）和文字来自
+   * 同一条台词的 face 标签，各抽各的就会出现「我是不是很笨」配一张晕脸这种
+   * 对不上的组合。播报类别变了要重抽。
+   */
+  line: Line | null;
+  linePool: LinePool | null;
 }
 
 /** 优先级：出错 > 已终止 > 完成。 */
+
+/** 这一轮播报里到底有没有真标题——没有的话副行是废话，不如不显示。 */
+function hasTitle(b: Burst, state: "error" | "canceled" | "success") {
+  if (state === "error") return !!b.errorTitle;
+  if (state === "canceled") return !!b.canceledTitle;
+  return !!b.successTitle;
+}
+
 function burstState(b: Burst): "error" | "canceled" | "success" {
   if (b.errorTitle !== null) return "error";
   if (b.canceledTitle !== null) return "canceled";
@@ -531,9 +634,10 @@ function enterAnnounce() {
   if (!b) return;
   const state = burstState(b);
   if (state === "error") {
-    showStill(TASK_FAILED);
+    // 表情跟着台词走（face 标签）。台词关掉或抽不到就退回固定那张。
+    showStill(b.line ? faceUrl(b.line.face) : TASK_FAILED);
   } else if (state === "canceled") {
-    showStill(TASK_CANCELED);
+    showStill(b.line ? faceUrl(b.line.face) : TASK_CANCELED);
   } else {
     // bubbleMs 说了算：预算短于原生时长就按比例加速，让动画完整播完而不是被
     // 砍在半路；长于则原速播完、停在最后一帧（视频播完自然定格）。
@@ -542,9 +646,19 @@ function enterAnnounce() {
   }
 }
 
+/** 这一轮播报该用哪个台词池。连续失败第 2 次起换一池更沮丧的说法。 */
+function poolFor(b: Burst): LinePool {
+  const state = burstState(b);
+  if (state === "error") return b.streak >= 2 ? "streak" : "error";
+  if (state === "canceled") return "canceled";
+  return "done";
+}
+
 function renderAnnounceBubble(b: Burst, bubbleMs: number) {
   const state = burstState(b);
+  const line = b.line;
   let text: string;
+  let sub: string | undefined;
   if (state === "error") {
     text = `${decorate(b.errorLabel, b.errorTitle as string)}出错了`;
     if (b.successes > 0) text += `（另有 ${b.successes} 个完成）`;
@@ -556,7 +670,13 @@ function renderAnnounceBubble(b: Burst, bubbleMs: number) {
       ? `${decorate(b.successLabel, b.successTitle)}等 ${b.successes} 个任务完成`
       : `${decorate(b.successLabel, b.successTitle)}完成`;
   }
-  showBubble(text, bubbleMs);
+  if (line) {
+    // 台词当主角，原来那句信息降为副行。标题为空时 decorate 会退化成「任务
+    // 完成」这种废话，那时副行直接省掉——并发合并的「等 N 个」仍要留着。
+    sub = hasTitle(b, state) || b.successes > 1 ? text : undefined;
+    text = line.t;
+  }
+  showBubble(text, bubbleMs, sub);
   const gen = ++announceGen;
   window.setTimeout(() => {
     if (gen !== announceGen) return; // 已被更新的播报接管
@@ -565,7 +685,7 @@ function renderAnnounceBubble(b: Burst, bubbleMs: number) {
   }, bubbleMs);
 }
 
-function onTaskComplete(title: string, outcome: string, label: string) {
+function onTaskComplete(title: string, outcome: string, label: string, streak = 0) {
   const bubbleMs = settings.bubble_ms;
   const before = burst ? burstState(burst) : null;
   if (!burst) {
@@ -573,12 +693,13 @@ function onTaskComplete(title: string, outcome: string, label: string) {
       successes: 0, successTitle: "", successLabel: "",
       errorTitle: null, errorLabel: "",
       canceledTitle: null, canceledLabel: "",
-      soundPlayed: false,
+      soundPlayed: false, streak: 0, line: null, linePool: null,
     };
   }
   if (outcome === "error") {
     burst.errorTitle = title;
     burst.errorLabel = label;
+    burst.streak = Math.max(burst.streak, streak);
   } else if (outcome === "canceled") {
     burst.canceledTitle = title;
     burst.canceledLabel = label;
@@ -592,6 +713,12 @@ function onTaskComplete(title: string, outcome: string, label: string) {
   if (!burst.soundPlayed && burstState(burst) === "success") {
     burst.soundPlayed = true;
     playDone();
+  }
+  // 台词要赶在 render 之前定下来——enterAnnounce 拿它的 face 决定身体。
+  const pool = poolFor(burst);
+  if (burst.linePool !== pool) {
+    burst.linePool = pool;
+    burst.line = pickLine(pool);
   }
   // 只有播报**类别**变了才重新进场（例如成功中途转成出错）；合并进来的后续
   // 完成不该把动画从头重播。
@@ -612,6 +739,20 @@ let todoUntil = 0;
 function onProgress(text: string, kind?: string, tool?: string) {
   if (!text) return;
   const now = Date.now();
+  // 「折腾」的另一半判据：工具调用次数。但光有次数不够——十几个飞快的调用
+  // 只说明活儿碎，不说明难，这时候说「有点难」是错的。所以还要求真的干了
+  // 一会儿。
+  if (kind === "tool" && st.working) {
+    toolsThisTask++;
+    if (!saidLongLine && !burst
+      && toolsThisTask >= LONG_TASK_TOOLS
+      && now - workingSince >= LONG_TASK_MIN_MS) {
+      saidLongLine = true;
+      clearLongTimer();
+      speak("long");
+      return; // 这一条进度让位给台词
+    }
+  }
   if (kind === "todo") {
     todoUntil = now + TODO_SHADOW_MS;
   } else if (now < todoUntil) {
@@ -646,6 +787,46 @@ function scheduleProgress() {
 }
 let pendingTool = "";
 
+// ---- 工作中的台词 ----
+// 开场白 + 「跑得久」各一条路径，都受频率约束：开场白带冷却，「跑得久」
+// 每个任务最多说一次。
+let lastStartLine = 0;
+let workingSince = 0;
+let toolsThisTask = 0;
+let saidLongLine = false;
+let longTimer: number | undefined;
+
+function clearLongTimer() {
+  if (longTimer !== undefined) { window.clearTimeout(longTimer); longTimer = undefined; }
+}
+
+/**
+ * 说一句台词。它和进度气泡抢同一个气泡，规则是**台词抢拍**——一个任务里最多
+ * 说一次，抢一下不乱；而进度本来就是间歇的，少一条无所谓。被抢掉的那条进度
+ * 会走既有的「被播报占用」记进测试日志。
+ */
+function speak(pool: LinePool, sub?: string) {
+  const line = pickLine(pool);
+  if (!line) return false;
+  showBubble(line.t, LINE_SHOW_MS, sub);
+  showStill(faceUrl(line.face));
+  trace("line", pool, line.t, "已显示");
+  // 说完回到该有的样子：工作态就继续打字，空闲态就回静图。
+  window.setTimeout(() => { if (currentAction === null) render(true); }, LINE_SHOW_MS);
+  return true;
+}
+
+/** 任务跑久了就吐槽一句。到点时若任务已经结束，什么都不做。 */
+function scheduleLongLine() {
+  clearLongTimer();
+  longTimer = window.setTimeout(() => {
+    longTimer = undefined;
+    if (!st.working || saidLongLine || burst) return;
+    saidLongLine = true;
+    speak("long");
+  }, LONG_TASK_MS);
+}
+
 // ---- 工作态（带防抖）----
 let workingDebounce: number | undefined;
 
@@ -657,10 +838,19 @@ function setWorking(active: boolean) {
     workingDebounce = window.setTimeout(() => {
       workingDebounce = undefined;
       st.working = true;
+      workingSince = Date.now();
+      toolsThisTask = 0;
+      saidLongLine = false;
       render();
+      // 先进工作态再说话：进场动画归 render，台词只是盖在上面的一层。
+      if (Date.now() - lastStartLine >= START_LINE_COOLDOWN_MS) {
+        if (speak("start")) lastStartLine = Date.now();
+      }
+      scheduleLongLine();
     }, WORKING_DEBOUNCE_MS);
   } else {
     st.working = false;
+    clearLongTimer();
     bubble.classList.remove("show"); // 任务结束，进度气泡立刻收
     render();
   }
@@ -737,6 +927,34 @@ function applyLayout(info: InitInfo) {
   refreshHit(); // 立绘尺寸定下来了，命中区才有意义
 }
 
+/**
+ * 把窗口收回屏幕内。
+ *
+ * 判据用的是**立绘**而不是窗口：窗口两侧各有一段全透明边距，贴边时本来就是
+ * 靠它悬出屏幕的，按窗口边收会把贴边状态一起收掉。
+ */
+async function clampOnScreen() {
+  try {
+    const mon = await currentMonitor();
+    if (!mon) return;
+    const pos = await appWindow.outerPosition();
+    const size = await appWindow.outerSize();
+    const inset = edgeInset(size.width, spriteWLogical * (await appWindow.scaleFactor()));
+    const left = mon.position.x;
+    const right = mon.position.x + mon.size.width;
+    const bottom = mon.position.y + mon.size.height;
+    let x = pos.x;
+    let y = pos.y;
+    if (pos.x + inset < left) x = left - inset;
+    if (pos.x + size.width - inset > right) x = right - size.width + inset;
+    if (pos.y + size.height > bottom) y = bottom - size.height;
+    if (y < mon.position.y) y = mon.position.y;
+    if (x !== pos.x || y !== pos.y) {
+      await appWindow.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+    }
+  } catch {}
+}
+
 /** 断连兜底：预算耗尽就关窗，谁也不用来收尸。 */
 function giveUp() {
   closedByUs = true;
@@ -761,7 +979,7 @@ function anyWorking() {
 function handleMessage(msg: any, link: Link) {
   const label = link.label;
   if (msg.type === "task-complete") {
-    onTaskComplete(msg.title ?? "", msg.outcome ?? "success", msg.label ?? label);
+    onTaskComplete(msg.title ?? "", msg.outcome ?? "success", msg.label ?? label, Number(msg.streak) || 0);
   } else if (msg.type === "working") {
     link.working = !!msg.active;
     setWorking(anyWorking());
@@ -797,8 +1015,58 @@ function handleMessage(msg: any, link: Link) {
       // action 为 null 表示当前画的是静图（动作播完并定格了）——贴边验证靠它
       // 等到确定的时刻，而不是猜一个 sleep。
       shown, mode, action: currentAction, edge: st.edge, working: st.working,
+      // 气泡的实测尺寸。「断成两行」这件事只能靠量高度看出来——单行是
+      // 字号×1.5 加上下内边距，两行就多一整行。
+      bubbleW: bubble.offsetWidth, bubbleH: bubble.offsetHeight,
+      // 气泡的两行分开报：台词是主角、标题是副行，验证台词得能分辨这两者。
+      // 当前静图的文件名（不含目录和扩展名）。验证「表情跟着台词走」需要它。
+      still: (img.getAttribute("src") ?? "").split("/").pop()?.replace(/\.webp$/, "") ?? "",
+      bubbleText: {
+        main: bubble.firstElementChild?.textContent ?? bubble.textContent ?? "",
+        sub: bubble.querySelector(".sub")?.textContent ?? "",
+      },
+      bubbleMaxW, petScale: settings.pet_scale, bubbleScale: settings.bubble_scale,
     };
     for (const l of links.values()) if (l.open) l.ws.send(JSON.stringify({ type: "debug-info", layout: payload }));
+  } else if (debugMode && msg.type === "debug-hitstate") {
+    // 把 Rust 轮询线程最近一次的判定摊开：光标、窗口原点、命中矩形、结论。
+    void invoke<unknown>("get_hit_debug")
+      .then((hit) => {
+        for (const l of links.values()) {
+          if (l.open) l.ws.send(JSON.stringify({ type: "debug-info", hit }));
+        }
+      })
+      .catch(() => {});
+  } else if (debugMode && msg.type === "debug-geom") {
+    // 窗口在屏幕上的真实位置和尺寸。缩放锚点（脚底 + 水平中心）只能靠它验证，
+    // 因为那是窗口层面的事，DOM 里看不见。
+    void Promise.all([appWindow.outerPosition(), appWindow.outerSize()])
+      .then(([pos, size]) => {
+        const payload = {
+          x: pos.x, y: pos.y, w: size.width, h: size.height,
+          spriteW: spriteWLogical, spriteH: img.offsetHeight,
+        };
+        for (const l of links.values()) {
+          if (l.open) l.ws.send(JSON.stringify({ type: "debug-info", geom: payload }));
+        }
+      })
+      .catch(() => {});
+  } else if (debugMode && msg.type === "debug-settings") {
+    // 读/写设置。写走的是真实的 set_settings，所以 Rust 那边的重算和广播
+    // 都会真的发生——测试测的是整条链路，不是一个旁路。
+    const done = () => {
+      for (const l of links.values()) {
+        if (l.open) l.ws.send(JSON.stringify({ type: "debug-info", settings }));
+      }
+    };
+    if (msg.set) {
+      void invoke("set_settings", { settings: msg.set })
+        .then(() => { settings = msg.set; applySettings(); })
+        .catch(() => {})
+        .finally(() => window.setTimeout(done, 250));
+    } else {
+      done();
+    }
   } else if (debugMode && msg.type === "debug-hit") {
     // 测试专用：直接驱动穿透状态，好在不注入鼠标点击的前提下验证 force 路径。
     void invoke("set_hit", { force: !!msg.force, rects: [] }).catch(() => {});
@@ -1146,6 +1414,20 @@ void listen<Settings>("settings-changed", (e) => {
   applySettings();
 });
 
+// 尺寸倍率变了：Rust 已经改好窗口大小、并按「固定脚底 + 水平中心」摆好位置，
+// 这里补上它不知道的那部分——贴边要重新对齐（Rust 不知道贴的是哪边），
+// 不贴边则要保证没被推出屏幕。
+void listen<InitInfo>("layout-changed", (e) => {
+  applyLayout(e.payload);
+  void (async () => {
+    if (st.edge) await alignToEdge(st.edge);
+    else await clampOnScreen();
+    layoutBubble();
+    refreshHit();
+    void persistPosition();
+  })();
+});
+
 // 桌宠被拖到已拔掉的显示器上就再也找不回来了——设置面板里的「重置位置」
 // 走这条路把它叫回主屏右下角。
 void listen("reset-position", () => {
@@ -1227,7 +1509,11 @@ function handleTest(m: any) {
       onProgress(String(m.text ?? ""), m.kind, m.tool);
       return;
     case "complete":
-      onTaskComplete(String(m.title ?? "测试任务"), String(m.outcome ?? "success"), "测试");
+      onTaskComplete(String(m.title ?? "测试任务"), String(m.outcome ?? "success"), "测试",
+        Number(m.streak) || 0);
+      return;
+    case "speak":
+      speak(String(m.pool ?? "done") as LinePool);
       return;
     case "long-idle":
       st.longIdle = !!m.on;
@@ -1244,6 +1530,13 @@ function handleTest(m: any) {
     case "open-test":
       // 自动化验证用：设置窗口曾经渲染成纯白，测试面板同样需要被真的打开看过。
       void invoke("open_test").catch(() => {});
+      return;
+    case "reset-position":
+      // 回到主屏右下角。尺寸测试要从一个**确定**的位置起步：桌宠若停在屏幕
+      // 顶部附近，放大会顶出上边缘而被 clampOnScreen 拉回来——那时「脚底不动」
+      // 本来就不该成立，让位置决定测试成败只会得到时灵时不灵的结果。
+      try { localStorage.removeItem(POS_KEY); } catch {}
+      void restorePosition().then(layoutBubble);
       return;
     case "reset":
       burst = null;
@@ -1273,7 +1566,7 @@ function warmStills() {
 
 void (async () => {
   warmStills();
-  await loadActions();
+  await Promise.all([loadActions(), loadLines()]);
   try { st.edge = (localStorage.getItem(EDGE_KEY) || null) as Edge; } catch {}
   render(true);
   // 窗口配置成初始隐藏：先把位置摆好再现身，避免在默认位置闪一下再跳走。

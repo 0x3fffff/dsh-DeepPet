@@ -39,6 +39,9 @@ const MANIFEST = [
   { dir: "音效", mode: "copy", only: ["任务完成.mp3"] },
 ];
 
+/** 散在 assets/ 根下、需要进运行时的单个文件。 */
+const LOOSE_FILES = ["台词.json"];
+
 // ---- 静图与动作的对齐 ----
 //
 // 立绘和动作视频原本是三套取景（详见 scripts/lib/framing.mjs），切换时角色会
@@ -125,6 +128,18 @@ for (const entry of MANIFEST) {
     }
     count++;
   }
+}
+
+for (const f of LOOSE_FILES) {
+  const src = join(SRC, f);
+  if (!existsSync(src)) {
+    console.error(`缺少运行时文件：${src}`);
+    process.exit(1);
+  }
+  const dst = join(OUT, f);
+  copyFileSync(src, dst);
+  bytes += statSync(dst).size;
+  count++;
 }
 
 if (overflow.length) {

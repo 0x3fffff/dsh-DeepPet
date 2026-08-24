@@ -80,6 +80,37 @@ const cases = [];
     got.length === 1 && got[0].outcome === "error", got]);
 }
 
+// 连续失败计数：桌宠据此换一池更沮丧的台词。数错了不会报错，只会在心情上
+// 说反话——所以把三种转移都钉死。
+{
+  const fail = (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("agent/error", { agent: AGENT, turn: 1, step: 1, error: new Error("boom") });
+    ctx.emit("agent/status", status("idle"));
+  };
+  const ok = (ctx) => { ctx.emit("agent/status", status("running")); ctx.emit("agent/status", status("idle")); };
+  const got = await run("测试对话", (ctx) => { fail(ctx); fail(ctx); fail(ctx); ok(ctx); fail(ctx); });
+  cases.push(["连续失败累加、成功即清零",
+    got.map((m) => m.streak).join(",") === "1,2,3,0,1", got.map((m) => `${m.outcome}:${m.streak}`)]);
+}
+
+// 「已终止」既不算成功也不算失败：那是用户按的，不该清零也不该累加。
+{
+  const got = await run("测试对话", (ctx) => {
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("agent/error", { agent: AGENT, turn: 1, step: 1, error: new Error("boom") });
+    ctx.emit("agent/status", status("idle"));            // error, streak 1
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("session/event", ...turnEnd("aborted", "user"));
+    ctx.emit("agent/status", status("idle"));            // canceled, streak 仍是 1
+    ctx.emit("agent/status", status("running"));
+    ctx.emit("agent/error", { agent: AGENT, turn: 1, step: 1, error: new Error("boom") });
+    ctx.emit("agent/status", status("idle"));            // error, streak 2
+  });
+  cases.push(["终止不影响连续失败计数",
+    got.map((m) => m.streak).join(",") === "1,1,2", got.map((m) => `${m.outcome}:${m.streak}`)]);
+}
+
 // 标题还没生成：不能静默跳过
 {
   const got = await run(undefined, finish);

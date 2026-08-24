@@ -9,6 +9,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 
+import { skipIfPetRunning, waitForPet } from "./lib/wait-pet.mjs";
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const exe = process.env.DSH_PET_BINARY
   || join(root, "packages", "win32-x64", "bin", "dsh-deep-pet.exe");
@@ -21,6 +23,9 @@ if (!existsSync(exe)) {
   console.log("SKIP: 未找到已入包的桌宠二进制；先跑 scripts/stage-binary.mjs");
   process.exit(0);
 }
+
+// 已经有一只桌宠在跑的话，这里拉起的那只会抢不到单例锁而立刻自杀。
+skipIfPetRunning();
 
 const PORT = 18778;
 const wss = new WebSocketServer({ host: "127.0.0.1", port: PORT });
@@ -55,7 +60,7 @@ function probe(petPid, farOnly) {
 }
 
 try {
-  await Promise.race([connected, timeout(15000, "桌宠未连上")]);
+  await waitForPet(pet, connected);
   // 等前端把命中区报上去（applyLayout 之后）。
   await new Promise((r) => setTimeout(r, 1500));
 

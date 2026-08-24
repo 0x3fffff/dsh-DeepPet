@@ -17,6 +17,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 
+import { skipIfPetRunning, waitForPet } from "./lib/wait-pet.mjs";
+
 function ask(ws, msg) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("桌宠没回 debug-info")), 5000);
@@ -45,6 +47,9 @@ if (!existsSync(exe)) {
   console.log("SKIP: 未找到已入包的桌宠二进制；先跑 scripts/stage-binary.mjs");
   process.exit(0);
 }
+
+// 已经有一只桌宠在跑的话，这里拉起的那只会抢不到单例锁而立刻自杀。
+skipIfPetRunning();
 
 const outDir = process.env.DSH_PET_SHOT_DIR || join(root, "test", ".shots");
 mkdirSync(outDir, { recursive: true });
@@ -81,7 +86,7 @@ function ink(shot) {
 const cases = [];
 let ws;
 try {
-  ws = await Promise.race([connected, sleep(15000).then(() => { throw new Error("桌宠没连上来"); })]);
+  ws = await waitForPet(pet, connected);
   const drive = (payload) => ws.send(JSON.stringify({ type: "debug-test", payload }));
 
   // 先复位。贴边状态是持久化的——test/edge.mjs 跑过之后桌宠一起来就是趴着的，

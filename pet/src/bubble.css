@@ -1,17 +1,23 @@
 /* 气泡外观。独立成文件是为了让设置窗口能用同一份 CSS 渲染样式预览——
    预览和真实气泡必须是同一套规则，否则「所见」和「所得」会慢慢分家。
-   定位相关的规则留在 styles.css 里的 #bubble 上。 */
+   定位相关的规则留在 styles.css 里的 #bubble 上。
+
+   尺寸全部挂在 --bubble-scale 上：字号乘它，内边距/圆角/尖角一律用 em 表达，
+   于是设置里那个「气泡大小」滑块只要改这一个数，整体等比放大。
+   五种样式各自覆盖 --font-size（像素样式是 12px 等宽），所以字号必须是**独立
+   的变量**而不是 font 简写的一部分——简写没法只乘其中一段。 */
 
 .bubble {
   --bg: rgba(255, 255, 255, 0.95);
   --fg: #333;
   --border: transparent;
-  --radius: 16px;
+  --radius: 1.23em;
   --shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
   --tilt: 0deg;
-  --pad: 8px 14px;
-  --font: 13px/1.5 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --tail: 12px;
+  --pad: 0.62em 1.08em;
+  --font-size: 13px;
+  --font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --tail: 0.92em;
 
   position: relative;
   box-sizing: border-box;
@@ -21,10 +27,23 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  font: var(--font);
+  font-family: var(--font-family);
+  font-size: calc(var(--font-size) * var(--bubble-scale, 1));
+  line-height: 1.5;
   text-align: center;
   word-break: break-word;
   white-space: normal;
+  /* 实在要折行时把两行长度拉平，而不是「一长一短」剩两个字孤零零占一行。
+     不支持的内核会忽略它，退化成普通折行。 */
+  text-wrap: balance;
+}
+
+/* 副行：任务标题。台词是主角，标题是「哪个任务」的注脚，所以小一号、低对比。
+   用 em 表达，跟着 --bubble-scale 一起缩放。 */
+.bubble .sub {
+  margin-top: 0.15em;
+  font-size: 0.85em;
+  opacity: 0.62;
 }
 
 /* 指向桌宠的小尖角。跟着 --bg / --border 走，否则换了深色底会露出白尖角。
@@ -61,7 +80,7 @@
   --bg: rgba(255, 255, 255, 0.4);
   --fg: #1b2431;
   --border: rgba(255, 255, 255, 0.66);
-  --radius: 18px;
+  --radius: 1.38em;
   --shadow: 0 8px 24px rgba(20, 30, 60, 0.28);
   background-image: linear-gradient(
     160deg,
@@ -81,7 +100,7 @@
   --bg: #fdf3cf;
   --fg: #4a3f22;
   --border: rgba(0, 0, 0, 0.07);
-  --radius: 3px;
+  --radius: 0.23em;
   --shadow: 2px 3px 9px rgba(0, 0, 0, 0.3);
   --tilt: -1.6deg;
   background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(0, 0, 0, 0.035));
@@ -98,15 +117,17 @@
   --border: #1b1b2a;
   --radius: 0;
   --shadow: 4px 4px 0 rgba(27, 27, 42, 0.85);
-  --font: 12px/1.6 Consolas, "Courier New", "Microsoft YaHei", monospace;
+  --font-size: 12px;
+  --font-family: Consolas, "Courier New", "Microsoft YaHei", monospace;
+  line-height: 1.6;
   border-width: 2px;
 }
 /* 旋转 45° 的菱形在硬边风格里会露出斜边，改用 clip-path 切出阶梯状尖角。 */
 .bubble[data-style="pixel"]::after {
-  width: 16px;
-  height: 12px;
-  bottom: -12px;
-  margin-left: calc(-8px + var(--tail-shift, 0px));
+  width: 1.33em;
+  height: 1em;
+  bottom: -1em;
+  margin-left: calc(-0.667em + var(--tail-shift, 0px));
   background: #1b1b2a;
   border: 0;
   border-radius: 0;

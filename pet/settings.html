@@ -9,6 +9,21 @@
   <body>
     <main class="page">
       <section>
+        <h2>大小</h2>
+        <div class="row">
+          <label class="slider-label" for="petScale">桌宠</label>
+          <input type="range" id="petScale" min="50" max="200" step="5" />
+          <output id="petScaleLabel"></output>
+        </div>
+        <div class="row">
+          <label class="slider-label" for="bubbleScale">气泡</label>
+          <input type="range" id="bubbleScale" min="50" max="200" step="5" />
+          <output id="bubbleScaleLabel"></output>
+        </div>
+        <p class="hint" id="scaleHint">拖动时桌宠实时跟着变，松手才保存。</p>
+      </section>
+
+      <section>
         <h2>气泡样式</h2>
         <div id="styles" class="styles"></div>
       </section>
@@ -20,6 +35,16 @@
           <output id="bubbleMsLabel"></output>
         </div>
         <p class="hint">完成动画会按这个时长自适应播放速度，始终完整播完。</p>
+      </section>
+
+      <section>
+        <h2>台词</h2>
+        <label class="check"><input type="checkbox" id="lines" /> 让桌宠自己说话</label>
+        <p class="hint">
+          关掉就回到纯信息播报。想改台词或称呼：把 <code>台词.json</code> 复制到
+          <code>%LOCALAPPDATA%</code> 下的 <code>com.dsh.deeppet\lines.json</code>，
+          存在就整体替换内置的那份。
+        </p>
       </section>
 
       <section>

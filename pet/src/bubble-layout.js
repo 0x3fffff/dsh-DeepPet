@@ -21,17 +21,25 @@ export function edgeInset(winW, spriteW) {
 }
 
 /**
- * 贴边后窗口有一截悬在屏幕外，窗口坐标系里还看得见的那一段是 [lo, hi]。
+ * 贴边后窗口有一截悬在屏幕外，窗口坐标系里留给气泡的那一段是 [lo, hi]。
+ *
+ * `margin` **只扣在被屏幕边裁掉的那一侧**。它的用途是「贴边时气泡别顶到
+ * 屏幕边」——另一侧压根没有屏幕边在旁边，那里的界限是窗口边，隔着一段全透明
+ * 区域，气泡正好贴住它也看不出来。
+ *
+ * 之前两侧都扣，于是不贴边时白白少了 2×margin 的可用宽度：180 变成 168，
+ * 「🔧 正在执行 npm 命令」这类刚好 162 的串在部分 DPI 下就被挤成了两行。
  *
  * @param {number} inner 窗口宽度
  * @param {number} spriteW 立绘宽度
  * @param {"left"|"right"|null} edge
+ * @param {number} [margin] 贴边侧与屏幕边留的空隙
  */
-export function visibleBand(inner, spriteW, edge) {
+export function visibleBand(inner, spriteW, edge, margin = 0) {
   const off = edgeInset(inner, spriteW);
   return {
-    lo: edge === "left" ? off : 0,
-    hi: edge === "right" ? inner - off : inner,
+    lo: edge === "left" ? off + margin : 0,
+    hi: edge === "right" ? inner - off - margin : inner,
   };
 }
 
@@ -46,15 +54,14 @@ export function visibleBand(inner, spriteW, edge) {
  * @param {number} p.lo 可见带左界
  * @param {number} p.hi 可见带右界
  * @param {number} p.width 气泡实测宽度（已受 maxWidth 限制）
- * @param {number} p.margin 气泡与可见带两端留的空隙
  * @param {number} p.tailInset 尖角至少离气泡两端多远
  * @returns {{ shift: number, tail: number }}
  */
-export function bubbleOffsets({ inner, lo, hi, width, margin, tailInset }) {
+export function bubbleOffsets({ inner, lo, hi, width, tailInset }) {
   const h = width / 2;
   const c = inner / 2;
-  const minShift = lo + margin + h - c;
-  const maxShift = hi - margin - h - c;
+  const minShift = lo + h - c;
+  const maxShift = hi - h - c;
   // 先取 min(0, maxShift)：右边放不下才往左推；再抬到 minShift 之上。
   // 调用方已把 maxWidth 压到带宽以内，所以这两个界限不会互相矛盾。
   const shift = Math.max(minShift, Math.min(0, maxShift));
@@ -62,7 +69,7 @@ export function bubbleOffsets({ inner, lo, hi, width, margin, tailInset }) {
   return { shift, tail: Math.max(-limit, Math.min(limit, -shift)) };
 }
 
-/** 可见带里留给气泡的最大宽度。 */
-export function bandWidth(lo, hi, margin) {
-  return Math.max(1, hi - lo - margin * 2);
+/** 可见带里留给气泡的最大宽度。边距已经由 visibleBand 扣好了。 */
+export function bandWidth(lo, hi) {
+  return Math.max(1, hi - lo);
 }
