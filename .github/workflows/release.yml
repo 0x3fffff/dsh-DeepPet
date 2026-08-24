@@ -21,7 +21,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # 必须和生成锁文件的版本一致。pnpm 9 会因为 pnpm-workspace.yaml
+          # 没有 packages: 键而拒绝安装（那个文件只是为了
+          # minimumReleaseAgeExclude，本仓库刻意不构成工作区）。
+          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 20
