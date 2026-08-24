@@ -34,6 +34,12 @@ jobs:
           workspaces: pet/src-tauri
       # 版本漂移会让每个用户都收到假的握手警告；DSH 契约漂移会让成败判别
       # 失效。两者发版前都必须先挡住（npm test 同时覆盖这两项）。
+      # 素材流水线（PNG→WebP、量 alpha 包围盒）全靠 ffmpeg，runner 上没有。
+      # 装在 test 之前而不是 build 之前：test/framing.mjs 检测不到 ffmpeg 会
+      # 直接 SKIP——那样取景不变量在 CI 里一次都没真正验过，而 SKIP 在汇总里
+      # 看着和通过一样。
+      - name: install ffmpeg
+        run: choco install ffmpeg -y --no-progress
       - name: install workspace deps
         run: pnpm install --frozen-lockfile
       - name: test
