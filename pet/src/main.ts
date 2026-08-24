@@ -801,18 +801,24 @@ function clearLongTimer() {
 }
 
 /**
- * 说一句台词。它和进度气泡抢同一个气泡，规则是**台词抢拍**——一个任务里最多
- * 说一次，抢一下不乱；而进度本来就是间歇的，少一条无所谓。被抢掉的那条进度
- * 会走既有的「被播报占用」记进测试日志。
+ * 说一句工作中的台词（开场白 / 「有点难」）。
+ *
+ * **只占气泡，不动身体**——她一边打字一边说话。第一版在这里顺手 showStill
+ * 了台词的 face，结果是：setWorking 同一个 tick 里先 render() 发起
+ * playAction("typing-intro")，紧接着 speak() 里的 showStill 又 ++playGen，
+ * 把刚发起的那次视频交接作废掉了（playAction 醒来发现代数不符就退出）。
+ * 于是打字动画压根没上屏，要等 4 秒后台词结束才补播——而且因为开场白有
+ * 3 分钟冷却，只有隔了一阵的第一个任务才会这样，表现为间歇性「不打字」。
+ *
+ * 台词和进度气泡抢同一个气泡，规则是**台词抢拍**：一个任务里最多说一次，
+ * 抢一下不乱；进度本来就是间歇的，少一条无所谓。被抢掉的那条会走既有的
+ * 「被播报占用」记进测试日志。
  */
 function speak(pool: LinePool, sub?: string) {
   const line = pickLine(pool);
   if (!line) return false;
   showBubble(line.t, LINE_SHOW_MS, sub);
-  showStill(faceUrl(line.face));
   trace("line", pool, line.t, "已显示");
-  // 说完回到该有的样子：工作态就继续打字，空闲态就回静图。
-  window.setTimeout(() => { if (currentAction === null) render(true); }, LINE_SHOW_MS);
   return true;
 }
 

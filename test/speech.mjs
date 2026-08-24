@@ -117,6 +117,23 @@ try {
   cases.push([`连抽 6 次没有相邻重复`, !repeated, seen]);
   cases.push([`连抽 6 次至少出现 3 种说法`, new Set(seen).size >= 3, seen]);
 
+  // ---- 开场白不能把打字动画顶掉 ----
+  // 第一版就是这么坏的：setWorking 同一个 tick 里先 render() 发起
+  // playAction("typing-intro")，紧接着 speak() 里的 showStill 又 ++playGen
+  // 把它作废，于是任务开始后好几秒不打字。而开场白有 3 分钟冷却，只有隔了
+  // 一阵的第一个任务才会这样——这种间歇性缺陷，不专门测就只能等用户来报。
+  drive({ cmd: "reset" });
+  await sleep(600);
+  drive({ cmd: "working", active: true });
+  await sleep(1600); // 800ms 防抖 + 交接
+  const w = await ask(ws, { type: "debug-layout" }, "layout");
+  cases.push([`任务开始后立刻在播打字动画（action=${JSON.stringify(w.action)}）`,
+    w.action === "typing-intro" || w.action === "typing-loop", w]);
+  cases.push([`开场白同时出现在气泡里（${JSON.stringify(w.bubbleText?.main)}）`,
+    poolTexts("start").has(w.bubbleText?.main), w.bubbleText]);
+  drive({ cmd: "working", active: false });
+  await sleep(500);
+
   // ---- 关掉开关：回到纯信息播报 ----
   await ask(ws, { type: "debug-settings", set: { ...saved, lines: false } }, "settings");
   await sleep(500);
