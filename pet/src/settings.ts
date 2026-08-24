@@ -37,7 +37,7 @@ const scaleHintEl = document.getElementById("scaleHint") as HTMLElement;
 
 let settings: Settings = {
   bubble_style: "classic", bubble_ms: 5000, sound: true,
-  pet_scale: 1, bubble_scale: 1, lines: true,
+  pet_scale: 1.35, bubble_scale: 1.2, lines: true,
 };
 let statusTimer: number | undefined;
 

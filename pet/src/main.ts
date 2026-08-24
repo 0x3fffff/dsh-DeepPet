@@ -112,7 +112,7 @@ interface Settings {
 }
 let settings: Settings = {
   bubble_style: "classic", bubble_ms: 5000, sound: true,
-  pet_scale: 1, bubble_scale: 1, lines: true,
+  pet_scale: 1.35, bubble_scale: 1.2, lines: true,
 };
 
 function applySettings() {
@@ -993,6 +993,10 @@ function handleMessage(msg: any, link: Link) {
     onProgress(String(msg.text ?? ""), msg.kind, msg.tool);
   } else if (msg.type === "balance" || msg.type === "balance-error") {
     onBalance(msg);
+  } else if (msg.type === "reset-position") {
+    // 网页按钮「已启动→重置位置」：清掉记住的位置，回到默认右下角。
+    try { localStorage.removeItem(POS_KEY); } catch {}
+    void restorePosition();
   } else if (debugMode && msg.type === "debug-open-settings") {
     void invoke<string>("open_settings")
       .then((url) => { for (const l of links.values()) if (l.open) l.ws.send(JSON.stringify({ type: "debug-info", url })); })

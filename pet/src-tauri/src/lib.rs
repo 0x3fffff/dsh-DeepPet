@@ -85,7 +85,11 @@ const LINES_FILE: &str = "lines.json";
 fn default_style() -> String { "classic".into() }
 fn default_bubble_ms() -> u32 { 5000 }
 fn default_sound() -> bool { true }
-fn default_scale() -> f64 { 1.0 }
+// 默认倍率不是 100%：短边 1/10 的桌宠在高分屏上偏小，实际用下来 135% 才是
+// 「一眼看得清、又不挡事」的那个点。气泡跟着放大一点，但不必同幅——它是拿来
+// 读字的，过大反而占屏。两者都在 50%~200% 的可调范围内，随时能改回去。
+fn default_pet_scale() -> f64 { 1.35 }
+fn default_bubble_scale() -> f64 { 1.2 }
 fn default_lines() -> bool { true }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -97,10 +101,10 @@ struct Settings {
     #[serde(default = "default_sound")]
     sound: bool,
     /// 桌宠大小倍率，1.0 = 屏幕短边 / 10。
-    #[serde(default = "default_scale")]
+    #[serde(default = "default_pet_scale")]
     pet_scale: f64,
     /// 气泡大小倍率：字号、内边距、圆角、最大宽度一起乘。
-    #[serde(default = "default_scale")]
+    #[serde(default = "default_bubble_scale")]
     bubble_scale: f64,
     /// 台词：关掉就回到纯信息播报（「『标题』完成」）。
     #[serde(default = "default_lines")]
@@ -113,8 +117,8 @@ impl Default for Settings {
             bubble_style: default_style(),
             bubble_ms: default_bubble_ms(),
             sound: default_sound(),
-            pet_scale: default_scale(),
-            bubble_scale: default_scale(),
+            pet_scale: default_pet_scale(),
+            bubble_scale: default_bubble_scale(),
             lines: default_lines(),
         }
     }

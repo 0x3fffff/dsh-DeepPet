@@ -11,5 +11,10 @@ packages/*/bin/
 # pet/public 由 scripts/build-assets.mjs 按清单从 assets/ 装配，是产物
 pet/public/
 
+# 工程细节笔记：本地开发时查，不上传。
+# 注意它的内容曾经在 README 里提交过，git 历史里仍然有——加进这里只能防止
+# 今后再上传，抹不掉历史。
+工程细节.md
+
 # 探针截图。可能把当时屏幕上的任何东西一起抓进来，绝不入库。
 test/.shots/
