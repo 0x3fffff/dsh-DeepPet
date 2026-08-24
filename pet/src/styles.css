@@ -104,6 +104,12 @@ body {
   white-space: nowrap;
 }
 
+/* 必须显式写：类选择器的优先级高于浏览器默认的 [hidden] { display: none }，
+   光给元素加 hidden 属性是藏不住的——测试面板那个按钮会照常显示出去。 */
+.menu-item[hidden] {
+  display: none;
+}
+
 .menu-item:hover {
   background: #f0f0f0;
 }

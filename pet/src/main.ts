@@ -1164,6 +1164,8 @@ async function init() {
     applySettings();
     const info = await invoke<InitInfo>("get_init");
     debugMode = info.debug;
+    // 测试面板的入口只在调试模式下露出，见 index.html 里的注释。
+    if (debugMode) menuTest.hidden = false;
     if (debugMode) startBlankWatch(); // 必须等这里——IIFE 开头时它还是 false
     selfVersion = info.version;
     envUrl = info.ws_url;
@@ -1381,12 +1383,13 @@ window.addEventListener("blur", endDrag);
 img.addEventListener("dblclick", () => requestBalance());
 
 // ---- 右键菜单 ----
-const MENU_W = 118;
-const MENU_H = 76;
+// 尺寸现量而不是写死：菜单项数会变（测试面板只在调试模式下露出），
+// 写死的高度会让菜单在屏幕下沿被摆到错的位置。菜单用 visibility 隐藏
+// 而不是 display:none，所以关着的时候 offset* 也是有效的。
 
 function openMenu(x: number, y: number) {
-  const left = Math.max(4, Math.min(x, window.innerWidth - MENU_W - 4));
-  const top = Math.max(4, Math.min(y, window.innerHeight - MENU_H - 4));
+  const left = Math.max(4, Math.min(x, window.innerWidth - menu.offsetWidth - 4));
+  const top = Math.max(4, Math.min(y, window.innerHeight - menu.offsetHeight - 4));
   menu.style.left = `${left}px`;
   menu.style.top = `${top}px`;
   menu.classList.add("open");

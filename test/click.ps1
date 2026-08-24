@@ -1,7 +1,8 @@
 # Mouse injector for test/dblclick.mjs.
 # ASCII only on purpose: Windows PowerShell 5.1 reads a BOM-less .ps1 as ANSI,
 # which mangles non-ASCII bytes and breaks parsing.
-# -Mode dblclick : two rapid clicks at (X, Y)
+# -Mode dblclick   : two rapid clicks at (X, Y)
+# -Mode rightclick : one right click at (X, Y), cursor stays there
 # -Mode drag     : press at (X, Y), move to (X2, Y) in steps, stay held
 # -Mode release  : release the left button wherever the cursor is
 param(
@@ -23,8 +24,10 @@ public static class M {
 "@
 [void][M]::SetProcessDPIAware()
 
-$DOWN = 0x0002
-$UP   = 0x0004
+$DOWN  = 0x0002
+$UP    = 0x0004
+$RDOWN = 0x0008
+$RUP   = 0x0010
 
 # Remember where the user's cursor was so we can put it back.
 $orig = New-Object PT
@@ -54,6 +57,16 @@ switch ($Mode) {
       [void][M]::SetCursorPos($nx, $Y)
       Start-Sleep -Milliseconds 25
     }
+  }
+  'rightclick' {
+    # Leaves the cursor on the sprite: the context menu closes on window blur,
+    # and moving the cursor off would let the window go click-through again.
+    [void][M]::SetCursorPos($X, $Y)
+    Start-Sleep -Milliseconds 200
+    [M]::mouse_event($RDOWN, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 40
+    [M]::mouse_event($RUP, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 200
   }
   'release' {
     [M]::mouse_event($UP, 0, 0, 0, [IntPtr]::Zero)
