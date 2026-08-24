@@ -2,7 +2,7 @@
 
 一个 DeepSeek Harness（DSH）桌宠插件。桌宠是一个无边框、透明、置顶的悬浮窗口：
 
-![桌宠在 DSH 跑任务时的样子](https://img.cdn1.vip/i/6a8c5d86ac643_1787583878.webp)
+![桌宠]([https://img.cdn1.vip/i/6a8c5d86ac643_1787583878.webp](https://img.cdn1.vip/i/6a8c5d86ac643_1787583878.webp))
 
 - **拖动**：按下并左右拖动时播放 8 帧跑步动画，水平方向决定朝向（左=原帧朝左，右=水平镜像朝右；纯垂直拖动按朝左），松手停在原地并记住位置。
 - **空闲**：默认 `平常.webp` 静态图，每隔 25～70 秒随机播一段待机动作（不连播同一个），播完回静态。
@@ -808,23 +808,3 @@ npm run test:flicker       # 切换动作时没有空帧（就是肉眼看到的
   config:
     petBinary: 'E:\path\to\dsh-DeepPet\pet\src-tauri\target\release\dsh-deep-pet.exe'
 ```
-
-## 发版
-
-打一个 `v<版本>` 的 tag 即可，`.github/workflows/release.yml` 会编译各平台二进制、
-校验版本一致性、先发平台包再发插件包（顺序不能反：插件对平台包是精确 pin）。
-
-改版本号时下面这些地方必须一起改，`node scripts/check-versions.mjs` 会把关：
-`plugin/package.json`（含 optionalDependencies 的 pin）、`packages/*/package.json`、
-`pet/package.json`、`pet/src-tauri/tauri.conf.json`、`pet/src-tauri/Cargo.toml`。
-
-## 素材说明
-
-- `assets/立绘/跑步/跑步_01~08.png`：8 帧跑步动画（朝左），384×512 RGBA。
-- `assets/立绘/表情/*.png`：23 张表情立绘，384×512 RGBA（v1 用 `平常` 空闲、`晕` 出错、`坐下` 已终止、`寻找` 断连；完成改用动画）。
-- `assets/动作/*.webm`：动作库（VP9 + alpha），由 `build-animation.mjs` 按 `动作清单.json` 从仓库外的 qtrle 母版生成；`index.json` 供前端查表。
-- `assets/立绘/表情.png`、`表情2.png`、`表情3.png`、`跑步.png`：1536×1024 总览大图。**参考用，不在运行时清单里**，不会进二进制。
-- `assets/音效/任务完成.mp3`：任务完成音效（2.4 秒）。`任务完成.wav`（1.5 秒）是上一版，保留但不再随包分发。
-
-以上都是**作者态**素材。运行时用的是 `pet/public/` 里由 `build-assets.mjs`
-装配出的 WebP 版本，不要手工编辑那个目录。
