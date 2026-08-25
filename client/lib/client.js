@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: "dsh-deep-pet-client",
+  id: "@0x3fffff/dsh-deep-pet-client",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;

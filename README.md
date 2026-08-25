@@ -16,7 +16,7 @@
 DSH 会读到这份说明并照着装。手动装的话：
 
 ```bash
-dsh plugin --profile <你的-profile> add dsh-deep-pet
+dsh plugin --profile <你的-profile> add @0x3fffff/dsh-deep-pet
 ```
 
 装完**重启 DSH**，桌宠会出现在主屏右下角。
@@ -29,7 +29,7 @@ dsh plugin --profile <你的-profile> add dsh-deep-pet
    编译，别硬装。
 2. **问清 profile**：上面命令里的 `<你的-profile>` 是占位符，**不要照抄**。
    先问用户在用哪个 DSH profile；或让用户自己确认后再执行。
-3. **执行**：`dsh plugin --profile <profile> add dsh-deep-pet`
+3. **执行**：`dsh plugin --profile <profile> add @0x3fffff/dsh-deep-pet`
 4. **不要**加 `--no-optional` 或 `--omit=optional`。桌宠二进制是通过
    optionalDependencies 按平台分发的，跳过它插件能装上但桌宠起不来。
 5. **让用户重启 DSH**，插件在加载时才会拉起桌宠窗口。

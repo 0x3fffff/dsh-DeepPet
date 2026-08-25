@@ -1,5 +1,5 @@
 {
-  "name": "dsh-deep-pet-client",
+  "name": "@0x3fffff/dsh-deep-pet-client",
   "version": "0.2.0",
   "type": "module",
   "main": "lib/index.js",

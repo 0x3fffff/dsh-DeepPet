@@ -133,7 +133,7 @@ const { version: VERSION } = require("../package.json");
  * 因此二进制与插件永远同版本——不存在缓存陈旧或校验缺失的问题。
  */
 const PLATFORM_PACKAGES = {
-  "win32-x64": "dsh-deep-pet-win32-x64",
+  "win32-x64": "@0x3fffff/dsh-deep-pet-win32-x64",
 };
 
 /** Schemastery 配置 schema。 */

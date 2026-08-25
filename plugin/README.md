@@ -1,4 +1,4 @@
-# dsh-deep-pet
+# @0x3fffff/dsh-deep-pet
 
 一个 DeepSeek Harness（DSH）桌宠插件。一个无边框、透明、置顶的小窗口，
 在你跑任务时打字、完成时庆祝、出错时垮脸，闲着会自己找乐子。
@@ -6,7 +6,7 @@
 ## 安装
 
 ```bash
-dsh plugin --profile <你的-profile> add dsh-deep-pet
+dsh plugin --profile <你的-profile> add @0x3fffff/dsh-deep-pet
 ```
 
 装完**重启 DSH**，桌宠会出现在主屏右下角。
