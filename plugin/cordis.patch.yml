@@ -1,7 +1,11 @@
-# dsh-deep-pet host bundle：插入 deep-pet 插件行。
+# @0x3fffff/dsh-deep-pet host bundle：插入桌宠插件行 + 网页端那半。
+#
+# name 必须是**完整的包名**（含作用域）。写错的代价不是「插件不生效」——
+# cordis loader import 不到就让整棵插件树加载失败，用户的 DSH 直接起不来。
+# test/patch.mjs 拿它和 package.json 的真实包名对账。
 - insert:
     - id: deep-pet
-      name: 'dsh-deep-pet'
+      name: '@0x3fffff/dsh-deep-pet'
       config:
         enabled: true
         apiKeyEnv: DEEPSEEK_API_KEY
@@ -9,3 +13,8 @@
         petBinary: ''
         # 一只桌宠服务多个 profile 时用来区分来源；留空则气泡不加前缀。
         label: ''
+    # 网页端那半需要自己的加载项：它的 apply 是空的，存在只为让 cordis 给它
+    # 建 fiber——没有这个 fiber，dsh-client-modules 就不会把它的 client 包扫进
+    # 浏览器 roster，侧栏按钮也就永远不出现。
+    - id: ui-deep-pet
+      name: '@0x3fffff/dsh-deep-pet-client'
