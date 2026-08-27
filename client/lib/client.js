@@ -1,5 +1,8 @@
 window.__ModuleLoader__.load({
-  id: "dsh-deep-pet-client",
+  // id 必须**逐字等于包名**：boot manifest 里的 row.id 就是包名，加载器拿它和
+  // 这里注册的 id 对账，对不上就抛「loaded without registering」，整棵插件树
+  // 加载失败。test/client-pkg.mjs 拿它和 package.json 的 name 对账。
+  id: "@0x3fffff/dsh-deep-pet-client",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;

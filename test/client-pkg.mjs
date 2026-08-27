@@ -43,6 +43,26 @@ if (rel) {
   push(`files 圈得住它（files=${JSON.stringify(files)}）`, covered, files);
 }
 
+// bundle 注册用的 id 必须**逐字等于包名**。
+//
+// 这条实际炸过：id 写成无作用域的 dsh-deep-pet-client，加载器抛
+// 「bundle ... loaded without registering "@0x3fffff/dsh-deep-pet-client"」，
+// 整棵插件树加载失败。加载器的判据是 boot manifest 里的 row.id（就是包名）
+// 和 __ModuleLoader__.load({id}) 的 id 做严格相等——差一个作用域前缀就是
+// 两个不同的模块，而它在本地怎么读代码都看不出来。
+//
+// 这和 test/patch.mjs 守的是同一条规则的另一层：凡是「这里写的名字必须等于
+// 真实包名」的地方，都拿真实包名对账，不靠肉眼。
+{
+  const bundle = readFileSync(join(root, "client", rel ?? "lib/client.js"), "utf8");
+  const m = /__ModuleLoader__\.load\(\{[\s\S]{0,400}?\bid:\s*(["'`])([^"'`]+)\1/.exec(bundle);
+  push("bundle 里调了 __ModuleLoader__.load 并带 id", m !== null, null);
+  if (m) {
+    push(`load 的 id 等于包名（id=${JSON.stringify(m[2])}，包名=${JSON.stringify(pkg.name)}）`,
+      m[2] === pkg.name, { id: m[2], name: pkg.name });
+  }
+}
+
 // react 不该是运行时依赖：client.js 里的 require 是浏览器侧 __ModuleLoader__
 // 提供的，和 npm 的依赖图无关。写成 dependencies 会让每个用户（含纯 CLI 的）
 // 白装一棵 React 树。
