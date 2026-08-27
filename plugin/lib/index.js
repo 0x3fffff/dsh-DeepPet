@@ -347,9 +347,14 @@ function apply(ctx, config) {
   });
 
   /**
-   * DSH 网页的地址。由网页端经 RPC 报上来——插件自己不知道：它只知道自己
-   * 那个 WS 服务的端口，网页服务是另一个进程口。协议在这里就卡死，别把
-   * 一个没校验过的串一路传到桌宠那边去调 ShellExecute。
+   * DSH 网页的地址，供桌宠右键菜单的「打开 DSH」用。
+   *
+   * 取自 `webServer` 服务自己报的绑定地址，**不依赖网页加载过**——这个功能
+   * 存在的场景恰恰是「DSH 还在跑，网页被关了，想找回来」，那时页面根本没机会
+   * 报任何东西。第一版让网页上报 location.origin，方向是反的。
+   *
+   * host 只有 '127.0.0.1' 和 '0.0.0.0' 两种取值；后者是「监听所有网卡」，
+   * 拿它当访问地址打不开，要换成回环。
    */
   let webUrl = "";
 
@@ -359,6 +364,17 @@ function apply(ctx, config) {
     webUrl = url;
     broadcast({ type: "web-url", url: webUrl });
   }
+
+  // 用 scoped inject 而不是把 webServer 写进插件的 inject 数组：写进去就成了
+  // 硬依赖，headless 之类没有网页服务的组合里整个桌宠插件都不会激活。这样
+  // 只有这一小段等它，拿不到就只是少一个菜单项。
+  ctx.inject(["webServer"], (scoped) => {
+    const ws = scoped.get("webServer");
+    const port = Number(ws?.port);
+    if (!Number.isInteger(port) || port <= 0) return;
+    const host = ws.host === "0.0.0.0" ? "127.0.0.1" : (ws.host || "127.0.0.1");
+    setWebUrl(`http://${host}:${port}`);
+  });
 
   /**
    * 查一次余额并回给桌宠。
@@ -481,13 +497,8 @@ function apply(ctx, config) {
     if (!rpc?.handle) return;
     // handle 返回的是异步 disposer，必须留着——插件卸载时不注销通道，
     // 重载后再注册同一个 channel 就会撞车。
-    const dispose = rpc.handle("/pet", async (endpoint, payload) => {
+    const dispose = rpc.handle("/pet", async (endpoint) => {
       if (endpoint === "launch") return { ok: true, value: ensurePet() };
-      // 网页把自己的 location.origin 报上来，转给桌宠给右键菜单用。
-      if (endpoint === "web-url") {
-        setWebUrl(payload?.url);
-        return { ok: true, value: { url: webUrl } };
-      }
       return { ok: false, error: { code: "not-found", message: `unknown endpoint ${endpoint}`, details: {} } };
     }, { authority: "loopback" });
     return () => { void dispose?.(); };

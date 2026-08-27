@@ -17,7 +17,7 @@ function read(pkg, ...rel) {
   return readFileSync(join(root, ...rel), "utf8");
 }
 
-let agentTypes, agentIndex, titleTypes, sessionTypes, sessionIndex, rpcTypes;
+let agentTypes, agentIndex, titleTypes, sessionTypes, sessionIndex, rpcTypes, webServerTypes;
 try {
   agentTypes = read("@deepseek-ai/dsh-agent", "lib", "types", "runtime-types.d.ts");
   // 事件定义在 runtime-types，registry（roots/list）在 index——分开读。
@@ -29,6 +29,9 @@ try {
   // 网页端「启动桌宠」按钮走 connection 的 RPC 通道。通道形状变了不会报错，
   // 只会让按钮静默失灵——所以也钉住。
   rpcTypes = read("@deepseek-ai/dsh-client-connection", "lib", "types", "rpc.d.ts");
+  // 右键「打开 DSH」的地址取自 webServer 服务自己报的绑定地址。这两个
+  // getter 没了或改名，菜单项就永远不亮——而那看起来像功能没做，不像坏了。
+  webServerTypes = read("@deepseek-ai/dsh-host-webserver", "lib", "types", "index.d.ts");
 } catch (err) {
   console.log(`SKIP: 未安装契约包（${err.message.split("\n")[0]}）；跑 pnpm install`);
   process.exit(0);
@@ -48,6 +51,13 @@ const checks = [
   // 客户端那半的调用签名，client.js 里按它写的。
   ["client 侧 rpc.call 仍是 (channel, endpoint, payload, signal?)",
     /call\(channel: string, endpoint: string, payload: unknown, signal\?: AbortSignal\)/.test(rpcTypes)],
+  // 「打开 DSH」靠这两个 getter 拼出地址。
+  ["webServer.port 仍是 number getter", /get port\(\): number;/.test(webServerTypes)],
+  // host 的取值范围决定了我们要不要把 0.0.0.0 换成回环——多一个取值（比如
+  // 具体网卡 IP）就得重新想怎么算访问地址。
+  ["webServer.host 仍只有回环和全网卡两种取值",
+    /host: '127\.0\.0\.1' \| '0\.0\.0\.0';/.test(webServerTypes)],
+  ["webServer 仍然挂在 ctx.webServer 上", /webServer: WebServer;/.test(webServerTypes)],
   // agent/status 只有两个值，这正是它分不出成败、必须靠 agent/error 判别的原因。
   // 若这里多出第三个值，整个 running->idle 边沿检测的语义都要重估。
   ["AgentStatus 仍是 'idle' | 'running'",

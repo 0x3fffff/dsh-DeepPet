@@ -2,6 +2,7 @@ import { currentMonitor, getCurrentWindow, LogicalPosition, PhysicalPosition } f
 import { invoke } from "@tauri-apps/api/core";
 import { bandWidth, bubbleOffsets, edgeInset, visibleBand } from "./bubble-layout.js";
 import { initialState as balanceInit, step as balanceStep } from "./balance-alert.js";
+import { whenPresentable } from "./video-ready.js";
 import { listen } from "@tauri-apps/api/event";
 
 const RUN_FRAMES = Array.from(
@@ -251,24 +252,6 @@ function clearEndHandler() {
   endTarget = null;
 }
 
-/**
- * 等到这个 video 真的把一帧交给了合成器。
- *
- * requestVideoFrameCallback 的语义正是「已呈现一帧」，比 `playing`（只表示
- * 播放已开始）准。它不可用、或解码失败/被策略拦下时都要有退路，否则画面会
- * 永远卡在旧层——所以再挂一个 `playing` 和一个超时兜底。
- */
-function firstFrame(v: HTMLVideoElement): Promise<void> {
-  return new Promise((resolve) => {
-    let done = false;
-    const fin = () => { if (done) return; done = true; resolve(); };
-    const anyV = v as unknown as { requestVideoFrameCallback?: (cb: () => void) => void };
-    anyV.requestVideoFrameCallback?.(fin);
-    v.addEventListener("playing", fin, { once: true });
-    window.setTimeout(fin, 600);
-  });
-}
-
 // 离屏预解码用的元素。直接给 #pet-img 赋 src 会有一段「已换 src、尚未解码」
 // 的空窗，那正是视频→静图那一闪的来源。
 const preloader = new Image();
@@ -363,12 +346,12 @@ function playAction(id: string, opts: PlayOpts = {}): boolean {
     next.addEventListener("ended", endHandler);
   }
   void next.play().catch(() => {});
-  void firstFrame(next).then(() => {
-    if (gen !== playGen) return;
-    // 超时兜底会在解码失败时也把我们唤醒。这时候若照常交接，就会亮出一个
-    // 空的 video 并熄掉静图——桌宠**整个消失**，比原来的一闪严重得多。
-    // 所以交接前确认它真的有画面，没有就把静图留在原位。
-    if (next.readyState < 2 || !next.videoWidth) return;
+  // 交接的前提是它**真的有画面**——不确认就交接会亮出一个空 video 并熄掉
+  // 静图，桌宠整个消失。但「暂时没好」不等于「永远不会好」：whenPresentable
+  // 会一直等到有画面（或被新播放接管），而不是像从前那样 600 毫秒一到就
+  // 永久放弃、把静图卡死在最后一帧。见 pet/src/video-ready.js。
+  void whenPresentable(next, () => gen === playGen).then((ok) => {
+    if (!ok || gen !== playGen) return;
     next.style.opacity = "1";
     // 只熄灭绘制，保留布局盒——命中区和鼠标事件都还挂在 img 上。
     img.style.opacity = "0";

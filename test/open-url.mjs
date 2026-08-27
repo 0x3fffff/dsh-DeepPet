@@ -1,14 +1,14 @@
-// 「打开 DSH」这条链路的协议校验。
+// 「打开 DSH」的地址来源与协议校验。
 //
-// 这个菜单项最终把一个字符串交给 Windows 的 ShellExecute，而那个字符串
-// **不是我们造的**：DSH 网页报 location.origin → 插件 RPC → 桌宠 → Rust。
-// ShellExecute 的语义是「按注册表决定用什么打开」，所以喂进去的东西决定了
-// 它启动什么程序。协议卡不住就不是「打不开网页」，是「点一下菜单启动了
-// 别的东西」。
+// 这个菜单项最终把一个字符串交给 Windows 的 ShellExecute，而 ShellExecute
+// 的语义是「按注册表决定用什么打开」——喂进去的东西决定它启动什么程序。
+// 协议卡不住就不是「打不开网页」，是「点一下菜单启动了别的东西」。所以
+// 插件、桌宠、Rust 各卡一道；中间任何一环被绕过（比如有人直接往桌宠的 WS
+// 上发一条 web-url），后面那道还在。
 //
-// 链路上有四个环节，其中三个各卡一道：插件的 setWebUrl、桌宠的 web-url
-// 处理、Rust 的 open_url。多重校验不是冗余——中间任何一环被绕过（比如
-// 有人直接往桌宠的 WS 上发一条 web-url），后面那道还在。
+// 地址取自 webServer 服务自己报的绑定地址，**不是网页报上来的**。第一版
+// 让网页把 location.origin 报上来，方向是反的：这个功能存在的场景恰恰是
+// 「DSH 还在跑、网页被关了、想找回来」，那时页面根本没机会报任何东西。
 // 用法：node test/open-url.mjs
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -39,11 +39,18 @@ push("只有收到合法地址才放出来",
   && (mainTs.match(/menuDsh\.hidden\s*=\s*false/g) ?? []).length === 1, null);
 
 // ---- 四个环节 ----
-push("网页端报的是 location.origin（而不是拼出来的串）",
-  /rpc\.call\(\s*"\/pet",\s*"web-url"/.test(clientJs)
-  && /window\.location\.origin/.test(clientJs), null);
-
-push("插件的 web-url 端点存在", /"web-url"/.test(pluginJs), null);
+// 地址来源：webServer 服务，不是网页。
+push("插件从 webServer 取地址", /ctx\.inject\(\["webServer"\]/.test(pluginJs), null);
+// 必须是 scoped inject，不能写进插件顶层的 inject 数组——写进去就成了硬
+// 依赖，headless 之类没有网页服务的组合里整个桌宠插件都不会激活。
+{
+  const top = /const inject = \[([^\]]*)\]/.exec(pluginJs)?.[1] ?? "";
+  push("webServer 不是插件的硬依赖", !top.includes("webServer"), top);
+}
+// 0.0.0.0 是「监听所有网卡」，拿它当访问地址打不开。
+push("0.0.0.0 换成回环地址", /0\.0\.0\.0.*127\.0\.0\.1/.test(pluginJs), null);
+// 网页那半不该再有上报——留着就是两条来源，出问题时分不清听了谁的。
+push("网页端不再上报地址", !/web-url/.test(clientJs), null);
 {
   const at = pluginJs.indexOf("function setWebUrl");
   const body = at < 0 ? "" : pluginJs.slice(at, at + 400);
