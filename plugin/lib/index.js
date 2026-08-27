@@ -210,12 +210,14 @@ function apply(ctx, config) {
       // 桌宠连上后先报自己的版本；不一致说明用了手工指定的 petBinary。
       if (msg.type === "hello") {
         settleHello();
+        // 补发已知的网页地址：桌宠可能是刚起来的，错过了上一次广播。
+        if (webUrl) send(ws, { type: "web-url", url: webUrl });
         if (msg.version !== VERSION) {
           warn(`桌宠版本 ${msg.version ?? "未知"} 与插件版本 ${VERSION} 不一致，行为可能异常`);
         }
         return;
       }
-      if (msg.type === "balance") void sendBalance(ws);
+      if (msg.type === "balance") void sendBalance(ws, msg.auto === true);
     });
     ws.on("close", drop);
     ws.on("error", drop);
@@ -344,8 +346,29 @@ function apply(ctx, config) {
     });
   });
 
-  async function sendBalance(ws) {
-    const reply = (obj) => send(ws, obj);
+  /**
+   * DSH 网页的地址。由网页端经 RPC 报上来——插件自己不知道：它只知道自己
+   * 那个 WS 服务的端口，网页服务是另一个进程口。协议在这里就卡死，别把
+   * 一个没校验过的串一路传到桌宠那边去调 ShellExecute。
+   */
+  let webUrl = "";
+
+  function setWebUrl(url) {
+    if (typeof url !== "string" || !/^https?:\/\//.test(url) || url.length > 2048) return;
+    if (url === webUrl) return;
+    webUrl = url;
+    broadcast({ type: "web-url", url: webUrl });
+  }
+
+  /**
+   * 查一次余额并回给桌宠。
+   *
+   * `auto` 原样回传，桌宠据此决定失败时要不要弹气泡：定时轮询的失败必须
+   * 静默，否则没配 API Key 的人会每 10 分钟被弹一次「未找到 API Key」，
+   * 一整天。双击手动查的失败照旧要看得见——那正是他排查问题的入口。
+   */
+  async function sendBalance(ws, auto = false) {
+    const reply = (obj) => send(ws, { ...obj, auto });
     try {
       const hit = await ctx.credentials.resolve(credentialRef(config.apiKeyEnv));
       if (!hit || !hit.value) return reply({ type: "balance-error", reason: "未找到 API Key" });
@@ -458,11 +481,14 @@ function apply(ctx, config) {
     if (!rpc?.handle) return;
     // handle 返回的是异步 disposer，必须留着——插件卸载时不注销通道，
     // 重载后再注册同一个 channel 就会撞车。
-    const dispose = rpc.handle("/pet", async (endpoint) => {
-      if (endpoint !== "launch") {
-        return { ok: false, error: { code: "not-found", message: `unknown endpoint ${endpoint}`, details: {} } };
+    const dispose = rpc.handle("/pet", async (endpoint, payload) => {
+      if (endpoint === "launch") return { ok: true, value: ensurePet() };
+      // 网页把自己的 location.origin 报上来，转给桌宠给右键菜单用。
+      if (endpoint === "web-url") {
+        setWebUrl(payload?.url);
+        return { ok: true, value: { url: webUrl } };
       }
-      return { ok: true, value: ensurePet() };
+      return { ok: false, error: { code: "not-found", message: `unknown endpoint ${endpoint}`, details: {} } };
     }, { authority: "loopback" });
     return () => { void dispose?.(); };
   });

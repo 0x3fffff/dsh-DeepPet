@@ -7,6 +7,8 @@ interface Settings {
   pet_scale: number;
   bubble_scale: number;
   lines: boolean;
+  balance_alert: boolean;
+  balance_threshold: number;
 }
 
 /**
@@ -34,10 +36,14 @@ const petScaleLabel = document.getElementById("petScaleLabel") as HTMLOutputElem
 const bubbleScaleEl = document.getElementById("bubbleScale") as HTMLInputElement;
 const bubbleScaleLabel = document.getElementById("bubbleScaleLabel") as HTMLOutputElement;
 const scaleHintEl = document.getElementById("scaleHint") as HTMLElement;
+const balanceAlertEl = document.getElementById("balanceAlert") as HTMLInputElement;
+const balanceThresholdEl = document.getElementById("balanceThreshold") as HTMLInputElement;
+const balanceRowEl = document.getElementById("balanceRow") as HTMLElement;
 
 let settings: Settings = {
   bubble_style: "classic", bubble_ms: 5000, sound: true,
   pet_scale: 1.35, bubble_scale: 1.2, lines: true,
+  balance_alert: true, balance_threshold: 5,
 };
 let statusTimer: number | undefined;
 
@@ -131,6 +137,28 @@ linesEl.addEventListener("change", () => {
   void save();
 });
 
+function renderBalance() {
+  balanceAlertEl.checked = settings.balance_alert;
+  balanceThresholdEl.value = String(settings.balance_threshold);
+  balanceRowEl.classList.toggle("disabled", !settings.balance_alert);
+}
+
+balanceAlertEl.addEventListener("change", () => {
+  settings.balance_alert = balanceAlertEl.checked;
+  renderBalance();
+  void save();
+});
+
+// 数字框用 change 而不是 input：input 会在你敲「1」准备敲「15」的那一瞬间
+// 先把阈值存成 1。清空输入框时不写 0（那会被状态机当成关闭），而是退回上一
+// 个有效值——把框清空是敲字的中间态，不是「我要设成零」。
+balanceThresholdEl.addEventListener("change", () => {
+  const v = Number(balanceThresholdEl.value);
+  if (Number.isFinite(v) && v >= 0) settings.balance_threshold = v;
+  renderBalance();
+  void save();
+});
+
 document.getElementById("resetPos")!.addEventListener("click", async () => {
   await invoke("reset_position").catch(() => {});
   note("桌宠已回到主屏右下角");
@@ -167,6 +195,7 @@ async function init() {
   renderScales();
   soundEl.checked = settings.sound;
   linesEl.checked = settings.lines;
+  renderBalance();
 }
 
 void init();

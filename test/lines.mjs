@@ -29,7 +29,7 @@ try {
 }
 
 // 池名和桌宠代码里的常量必须对上。少一个池不会报错，只会静悄悄地不说话。
-const REQUIRED = ["done", "error", "canceled", "start", "long", "streak"];
+const REQUIRED = ["done", "error", "canceled", "start", "long", "streak", "low-balance"];
 for (const pool of REQUIRED) {
   const arr = lines[pool];
   push(`存在 ${pool} 池`, Array.isArray(arr) && arr.length > 0, arr);

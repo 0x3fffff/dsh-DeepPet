@@ -6,7 +6,7 @@
   "scripts": {
     "check-versions": "node scripts/check-versions.mjs",
     "stage": "node scripts/stage-binary.mjs",
-    "test": "node scripts/check-versions.mjs && node test/contract.mjs && node test/redact.mjs && node test/bubble-layout.mjs && node test/framing.mjs && node test/lines.mjs && node test/menu.mjs && node test/client-pkg.mjs && node test/patch.mjs && node test/plugin-smoke.mjs && node test/handshake.mjs",
+    "test": "node scripts/check-versions.mjs && node test/contract.mjs && node test/redact.mjs && node test/bubble-layout.mjs && node test/balance-alert.mjs && node test/settings-shape.mjs && node test/framing.mjs && node test/lines.mjs && node test/menu.mjs && node test/open-url.mjs && node test/client-pkg.mjs && node test/patch.mjs && node test/plugin-smoke.mjs && node test/handshake.mjs",
     "test:integration": "node test/integration-smoke.mjs",
     "test:clickthrough": "node test/clickthrough.mjs",
     "test:orphan": "node test/orphan.mjs",
@@ -18,9 +18,10 @@
     "test:size": "node test/size.mjs",
     "test:responsive": "node test/responsive.mjs",
     "test:speech": "node test/speech.mjs",
+    "test:balance": "node test/balance.mjs",
     "test:framing-live": "node test/framing-live.mjs",
     "test:flicker": "node test/flicker.mjs",
-    "test:live": "node test/edge.mjs && node test/dblclick.mjs && node test/progress.mjs && node test/panel.mjs && node test/size.mjs && node test/framing-live.mjs && node test/flicker.mjs && node test/speech.mjs && node test/responsive.mjs",
+    "test:live": "node test/edge.mjs && node test/dblclick.mjs && node test/progress.mjs && node test/panel.mjs && node test/size.mjs && node test/framing-live.mjs && node test/flicker.mjs && node test/speech.mjs && node test/balance.mjs && node test/responsive.mjs",
     "build-assets": "node scripts/build-assets.mjs",
     "build-animation": "node scripts/build-animation.mjs"
   },

@@ -1,6 +1,7 @@
 import { currentMonitor, getCurrentWindow, LogicalPosition, PhysicalPosition } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { bandWidth, bubbleOffsets, edgeInset, visibleBand } from "./bubble-layout.js";
+import { initialState as balanceInit, step as balanceStep } from "./balance-alert.js";
 import { listen } from "@tauri-apps/api/event";
 
 const RUN_FRAMES = Array.from(
@@ -13,6 +14,17 @@ const TASK_FAILED = "/立绘/表情/晕.webp";
 // 「已终止」用中性表情：不庆祝，也不卖惨——是你自己按的终止。
 const TASK_CANCELED = "/立绘/表情/坐下.webp";
 const AUDIO = "/音效/任务完成.mp3";
+const LOW_BALANCE_AUDIO = "/音效/余额快用光了.mp3";
+const LOW_BALANCE_ACTION = "low-balance";
+/** low-balance.webm 的原生时长（毫秒）。它**不变速**——见 enterLowBalance。 */
+const LOW_BALANCE_NATIVE_MS = 8000;
+// 兜底轮询间隔。余额只会因为用 API 而下降，所以真正有信息量的时机是任务
+// 刚结束那一刻；这个定时器只用来盖住「同一个 key 在别处被用了」。
+const BALANCE_POLL_MS = 10 * 60 * 1000;
+// 任务结束后查询的最小间隔。连珠炮似的小任务不该变成连珠炮似的余额查询。
+const BALANCE_TASK_DEBOUNCE_MS = 2 * 60 * 1000;
+// 启动后多久打第一次底。要给会合目录轮询留出连上的时间。
+const BALANCE_PRIME_MS = 15 * 1000;
 const FPS = 12;
 
 // 动作库：由 assets/动作清单.json 驱动，构建时转成 WebM（VP9+alpha）并产出
@@ -91,6 +103,7 @@ const img = document.getElementById("pet-img") as HTMLImageElement;
 const bubble = document.getElementById("bubble") as HTMLElement;
 const menu = document.getElementById("menu") as HTMLElement;
 const menuSettings = document.getElementById("menu-settings") as HTMLElement;
+const menuDsh = document.getElementById("menu-dsh") as HTMLElement;
 const menuTest = document.getElementById("menu-test") as HTMLElement;
 const videos = [
   document.getElementById("pet-video") as HTMLVideoElement,
@@ -109,10 +122,13 @@ interface Settings {
   pet_scale: number;
   bubble_scale: number;
   lines: boolean;
+  balance_alert: boolean;
+  balance_threshold: number;
 }
 let settings: Settings = {
   bubble_style: "classic", bubble_ms: 5000, sound: true,
   pet_scale: 1.35, bubble_scale: 1.2, lines: true,
+  balance_alert: true, balance_threshold: 5,
 };
 
 function applySettings() {
@@ -167,7 +183,7 @@ interface Line {
   face: string;
 }
 
-type LinePool = "done" | "error" | "canceled" | "start" | "long" | "streak";
+type LinePool = "done" | "error" | "canceled" | "start" | "long" | "streak" | "low-balance";
 
 const lines = new Map<LinePool, Line[]>();
 // 每池上一句，用来避免连着抽到同一句——池子再大，连说两遍同一句也很出戏。
@@ -186,7 +202,7 @@ async function loadLines() {
     }
     if (!data) data = await (await fetch(LINES_URL)).json();
     const src = data as Record<string, unknown>;
-    for (const pool of ["done", "error", "canceled", "start", "long", "streak"] as LinePool[]) {
+    for (const pool of ["done", "error", "canceled", "start", "long", "streak", "low-balance"] as LinePool[]) {
       const arr = Array.isArray(src?.[pool]) ? (src[pool] as unknown[]) : [];
       const clean = arr.filter((x: unknown): x is Line =>
         !!x && typeof (x as Line).t === "string" && typeof (x as Line).face === "string");
@@ -370,6 +386,7 @@ let runIndex = 0;
 let scale = 1;
 let bubbleTimer: number | undefined;
 let audio: HTMLAudioElement | undefined;
+let lowAudio: HTMLAudioElement | undefined;
 
 appWindow.scaleFactor().then((s) => { scale = s; }).catch(() => {});
 
@@ -409,6 +426,7 @@ function wantKind(): string {
   if (st.dragging) return "drag";
   if (st.edge) return `edge:${st.edge}`;
   if (burst) return `announce:${burstState(burst)}`;
+  if (lowBalance) return "lowBalance";
   if (st.working) return "working";
   if (st.longIdle) return "longIdle";
   return "idle";
@@ -418,7 +436,9 @@ function render(force = false) {
   const want = wantKind();
   if (!force && want === shown) return;
   shown = want;
-  mode = want === "drag" ? "running" : want.startsWith("announce:") ? "task" : "idle";
+  mode = want === "drag" ? "running"
+    : want.startsWith("announce:") || want === "lowBalance" ? "task"
+    : "idle";
   clearIdleTimer();
   clearLongIdleTimer();
   if (want !== "drag") stopRun();
@@ -426,6 +446,7 @@ function render(force = false) {
   if (want === "drag") { startRun(facing); return; }
   if (want.startsWith("edge:")) { enterEdge(want.endsWith("right")); return; }
   if (want.startsWith("announce:")) { enterAnnounce(); return; }
+  if (want === "lowBalance") { enterLowBalance(); return; }
   if (want === "working") { enterWorking(); return; }
   if (want === "longIdle") { enterLongIdle(); return; }
   enterIdle();
@@ -567,15 +588,24 @@ function showBubble(text: string, ms: number, sub?: string) {
 function ensureAudio() {
   if (audio) return;
   audio = new Audio(AUDIO);
-  // 借首次用户手势解锁自动播放。
-  audio.play().then(() => { audio!.pause(); audio!.currentTime = 0; }).catch(() => {});
+  lowAudio = new Audio(LOW_BALANCE_AUDIO);
+  // 借首次用户手势解锁自动播放。**两条都要解锁**：余额提醒是唯一一条
+  // 没人点过就要自己响的音效，漏掉它就等于它永远不响，而且不报错。
+  for (const a of [audio, lowAudio]) {
+    a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+  }
 }
 
-function playDone() {
+/** 按名字放，**不能传元素**：首次调用时元素还是 undefined，实参会在
+    ensureAudio() 赋值之前就被捕获，结果是一声不响还不报错。 */
+function playSound(which: "done" | "low") {
   if (!settings.sound) return;
   ensureAudio();
-  if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
+  const a = which === "done" ? audio : lowAudio;
+  if (a) { a.currentTime = 0; a.play().catch(() => {}); }
 }
+
+function playDone() { playSound("done"); }
 
 /**
  * 一轮播报。并发完成时不排队而是合并——排队会让桌宠播报几十秒前的状态，
@@ -609,6 +639,18 @@ function hasTitle(b: Burst, state: "error" | "canceled" | "success") {
   if (state === "canceled") return !!b.canceledTitle;
   return !!b.successTitle;
 }
+
+/**
+ * 一次待播或正在播的余额提醒。
+ *
+ * 之所以是独立状态而不是塞进 Burst：Burst 会合并（并发完成时不排队），
+ * 余额提醒不能合并——它一轮只该出现一次，合并语义放在这里是错的。
+ */
+interface LowAlert { text: string; sub?: string; face: string | null }
+let lowBalance: LowAlert | null = null;
+/** 撞上任务播报时先挂在这儿，等那一轮收尾了再上。 */
+let pendingLow: LowAlert | null = null;
+let lowGen = 0;
 
 function burstState(b: Burst): "error" | "canceled" | "success" {
   if (b.errorTitle !== null) return "error";
@@ -644,6 +686,52 @@ function enterAnnounce() {
     const rate = Math.max(1, (DONE_NATIVE_S * 1000) / Math.max(1, settings.bubble_ms));
     if (!playAction("done", { rate })) showStill(IDLE);
   }
+}
+
+/**
+ * 播余额提醒：8 秒动画 + 音效 + 气泡。
+ *
+ * 动画**不变速**。完成播报会按 bubble_ms 变速塞进气泡时长里，那是因为
+ * 它没有配套音轨；余额提醒的 mp3 和 mov 是等长配好的（都是 8.0 秒），
+ * 变速视频而音频没法跟着变（变了会失真），音画当场脱节。所以反过来——
+ * 让气泡跟着动画延长。这是个一天顶多一两次的提醒，多占 3 秒不亏。
+ */
+function enterLowBalance() {
+  const lb = lowBalance;
+  if (!lb) return;
+  if (!playAction(LOW_BALANCE_ACTION)) showStill(lb.face ? faceUrl(lb.face) : TASK_FAILED);
+  playSound("low");
+  const ms = Math.max(settings.bubble_ms, LOW_BALANCE_NATIVE_MS);
+  showBubble(lb.text, ms, lb.sub);
+  const gen = ++lowGen;
+  window.setTimeout(() => {
+    if (gen !== lowGen) return; // 已被更新的播报接管
+    lowBalance = null;
+    render();
+  }, ms);
+}
+
+/**
+ * 把一次余额提醒送出去。
+ *
+ * 三种场合只出气泡和音效、不动身体：
+ *   工作中——停下来站好演 8 秒再坐回去，你的第一反应会是「任务卡了吗」；
+ *   贴边——窗口有一截（约半个立绘宽）本来就悬在屏幕外，全身动画会被屏幕边
+ *          切掉半个，那不是提醒是故障；
+ *   拖拽中——你手正按着它。
+ * 这三种场合都**不补播**：等你忙完再演一遍 8 秒，那时它已经不是新消息了。
+ */
+function deliverLow(lb: LowAlert) {
+  const ms = Math.max(settings.bubble_ms, LOW_BALANCE_NATIVE_MS);
+  if (st.working || st.edge || st.dragging) {
+    playSound("low");
+    showBubble(lb.text, ms, lb.sub);
+    trace("balance", "提醒", lb.text, "仅气泡（工作中/贴边/拖拽）");
+    return;
+  }
+  lowBalance = lb;
+  trace("balance", "提醒", lb.text, "全套播报");
+  render();
 }
 
 /** 这一轮播报该用哪个台词池。连续失败第 2 次起换一池更沮丧的说法。 */
@@ -682,6 +770,8 @@ function renderAnnounceBubble(b: Burst, bubbleMs: number) {
     if (gen !== announceGen) return; // 已被更新的播报接管
     burst = null;
     render();
+    // 这一轮播报期间攒下的余额提醒，现在才轮到它。
+    if (pendingLow) { const lb = pendingLow; pendingLow = null; deliverLow(lb); }
   }, bubbleMs);
 }
 
@@ -724,6 +814,9 @@ function onTaskComplete(title: string, outcome: string, label: string, streak = 
   // 完成不该把动画从头重播。
   render(before !== null && before !== burstState(burst));
   renderAnnounceBubble(burst, bubbleMs);
+  // 刚烧完钱，此刻的余额最有信息量。查询是异步的，回包多半在这一轮播报
+  // 还挂着的时候到——那时 burst 非空，提醒会自动排到播报后面。
+  pollBalanceAfterTask();
 }
 
 // ---- 任务进度气泡 ----
@@ -875,13 +968,57 @@ async function pollIdle() {
   window.setTimeout(() => { void pollIdle(); }, next);
 }
 
-function onBalance(msg: any) {
-  if (msg.type === "balance") {
-    const sym = msg.currency === "CNY" ? "¥" : `${msg.currency} `;
-    showBubble(`余额 ${sym}${msg.amount}`, 5000);
-  } else if (msg.type === "balance-error") {
-    showBubble(`余额查询失败：${msg.reason}`, 5000);
+function currencySymbol(currency: unknown) {
+  return currency === "CNY" ? "¥" : `${String(currency ?? "")} `;
+}
+
+/**
+ * 每条连接各自一套迟滞状态，按 url 索引（links 也是按 url 去重的）。
+ *
+ * 不能共用一套：两个 profile 配着不同的 key 时，A 有 ¥50、B 只剩 ¥2，
+ * 共用状态会被 A 的读数不断「重新武装」，于是 B 每 10 分钟报一次警，
+ * 正好是这套迟滞要防的那件事。状态刻意不随连接断开而清掉——重连一次就
+ * 重报一次警同样是骚扰。
+ */
+const balanceStates = new Map<string, ReturnType<typeof balanceInit>>();
+
+function onBalance(msg: any, link: Link) {
+  const auto = msg.auto === true;
+  if (msg.type === "balance-error") {
+    // 自动查询的失败一律静默。否则没配 API Key 的人会每 10 分钟被弹一次
+    // 「未找到 API Key」，一整天——那足以让人把整个功能关掉。
+    // 双击手动查的失败照旧看得见，那正是他排查问题的入口。
+    if (auto) trace("balance", "查询失败", String(msg.reason ?? ""), "已静默");
+    else showBubble(`余额查询失败：${msg.reason}`, 5000);
+    return;
   }
+  if (msg.type !== "balance") return;
+  const amount = Number(msg.amount);
+  if (!auto) showBubble(`余额 ${currencySymbol(msg.currency)}${msg.amount}`, 5000);
+
+  // 只有自动查询喂状态机。双击是「我想看看还剩多少」，看完他自己就知道了，
+  // 再叠一段 8 秒动画上去是重复。
+  if (!auto || !settings.balance_alert) return;
+  const key = link.ws.url || link.label;
+  const prev = balanceStates.get(key) ?? balanceInit();
+  const r = balanceStep(prev, amount, settings.balance_threshold);
+  balanceStates.set(key, r.state);
+  trace("balance", link.label, `${amount}`, r.alert ?? "未触发");
+  if (!r.alert) return;
+  // 已经有一次在播或在排队就丢掉这一次：多条连接同时见底时，两遍动画
+  // 叠在一起既看不清也听不清。
+  if (lowBalance || pendingLow) { trace("balance", link.label, `${amount}`, "已有提醒在播，丢弃"); return; }
+
+  const line = pickLine("low-balance");
+  const info = `余额 ${currencySymbol(msg.currency)}${amount}`;
+  const tail = openCount() > 1 && link.label ? ` · ${link.label}` : "";
+  const lb: LowAlert = line
+    ? { text: line.t, sub: info + tail, face: line.face }
+    : { text: info + tail, face: null };
+  // 撞上任务播报就排队，等那一轮说完再上——两个气泡抢同一块地方，
+  // 后来的会把前一条直接顶掉，而任务结果是你更等着看的那条。
+  if (burst) { pendingLow = lb; trace("balance", link.label, lb.text, "排队等播报"); return; }
+  deliverLow(lb);
 }
 
 // ---- 布局 & 连接 ----
@@ -919,6 +1056,8 @@ let pollTimer: number | undefined;
 let debugMode = false;
 let selfVersion = "";
 let envUrl = "";
+/** DSH 网页地址，由网页端经插件报上来。空的时候右键菜单里没有「打开 DSH」。 */
+let dshUrl = "";
 
 function applyLayout(info: InitInfo) {
   for (const el of [img, ...videos]) {
@@ -992,7 +1131,15 @@ function handleMessage(msg: any, link: Link) {
   } else if (msg.type === "progress") {
     onProgress(String(msg.text ?? ""), msg.kind, msg.tool);
   } else if (msg.type === "balance" || msg.type === "balance-error") {
-    onBalance(msg);
+    onBalance(msg, link);
+  } else if (msg.type === "web-url") {
+    // DSH 网页把自己的 location.origin 报上来了（网页 → 插件 RPC → 这里）。
+    // 协议在网页端、插件端、Rust 端各卡一道——这个串最终会喂给 ShellExecute。
+    const url = String(msg.url ?? "");
+    if (/^https?:\/\//.test(url) && url.length <= 2048) {
+      dshUrl = url;
+      menuDsh.hidden = false;
+    }
   } else if (msg.type === "reset-position") {
     // 网页按钮「已启动→重置位置」：清掉记住的位置，回到默认右下角。
     try { localStorage.removeItem(POS_KEY); } catch {}
@@ -1028,6 +1175,10 @@ function handleMessage(msg: any, link: Link) {
       // 气泡的实测尺寸。「断成两行」这件事只能靠量高度看出来——单行是
       // 字号×1.5 加上下内边距，两行就多一整行。
       bubbleW: bubble.offsetWidth, bubbleH: bubble.offsetHeight,
+      // 气泡此刻**可见吗**。bubbleText 读的是 DOM，气泡收起来之后文字还在，
+      // 光看它没法分辨「还挂着」和「早收了」——而余额提醒把气泡延长到 8 秒
+      // 这件事，恰恰只能靠这个区分。
+      bubbleShown: bubble.classList.contains("show"),
       // 气泡的两行分开报：台词是主角、标题是副行，验证台词得能分辨这两者。
       // 当前静图的文件名（不含目录和扩展名）。验证「表情跟着台词走」需要它。
       still: (img.getAttribute("src") ?? "").split("/").pop()?.replace(/\.webp$/, "") ?? "",
@@ -1076,6 +1227,35 @@ function handleMessage(msg: any, link: Link) {
         .finally(() => window.setTimeout(done, 250));
     } else {
       done();
+    }
+  } else if (debugMode && msg.type === "debug-balance") {
+    // 测试专用：注入一个余额读数，走**完整**的 onBalance 路径——同一个迟滞
+    // 状态机、同一个排队规则、同一段播放代码。绕开它们的话测的就不是这个
+    // 功能，而是一段只在测试里存在的旁路。
+    onBalance({ type: "balance", currency: msg.currency ?? "CNY", amount: msg.amount, auto: true }, link);
+    for (const l of links.values()) {
+      if (l.open) {
+        l.ws.send(JSON.stringify({
+          type: "debug-info",
+          balance: {
+            pending: !!pendingLow,
+            playing: !!lowBalance,
+            action: currentAction,
+            text: lowBalance?.text ?? null,
+            sub: lowBalance?.sub ?? null,
+            state: Object.fromEntries(balanceStates),
+          },
+        }));
+      }
+    }
+  } else if (debugMode && msg.type === "debug-reset-balance") {
+    balanceStates.clear();
+    lowBalance = null;
+    pendingLow = null;
+    lowGen++;
+    render();
+    for (const l of links.values()) {
+      if (l.open) l.ws.send(JSON.stringify({ type: "debug-info", balance: { reset: true } }));
     }
   } else if (debugMode && msg.type === "debug-hit") {
     // 测试专用：直接驱动穿透状态，好在不注入鼠标点击的前提下验证 force 路径。
@@ -1180,13 +1360,53 @@ async function init() {
   void poll();
 }
 
-/** 余额只问第一条打开的连接——多个 profile 可能配着不同的 key，问全部会弹出多个气泡。 */
+/**
+ * 双击手动查。只问第一条打开的连接——多个 profile 可能配着不同的 key，
+ * 问全部会弹出多个气泡，而你按下双击只是想看一个数字。
+ */
 function requestBalance() {
   for (const link of links.values()) {
     if (link.open) { link.ws.send(JSON.stringify({ type: "balance" })); return; }
   }
   showBubble("桌宠未连接 DSH", 3000);
 }
+
+// ---- 余额提醒的自动查询 ----
+let lastBalanceAt = 0;
+
+/**
+ * 向**所有**打开的连接各查一次。和手动查不同：这是报警，漏掉一个账户就等于
+ * 那个账户可以在你不知情的时候烧干。重复报警由每条连接各自的迟滞状态
+ * （balanceStates）和「已有提醒在播就丢弃」两道闸压住，不靠只问一条来省事。
+ *
+ * @returns 有没有真的发出去。发不出去（还没连上）就不记时间戳，好让打底
+ *          重试继续往下走，而不是把这一轮当成已经查过了。
+ */
+function pollBalance(reason: string): boolean {
+  if (!settings.balance_alert) return false;
+  let sent = 0;
+  for (const link of links.values()) {
+    if (!link.open) continue;
+    try { link.ws.send(JSON.stringify({ type: "balance", auto: true })); sent++; } catch {}
+  }
+  if (sent) lastBalanceAt = Date.now();
+  trace("balance", "查询", reason, sent ? `已发往 ${sent} 条连接` : "无可用连接");
+  return sent > 0;
+}
+
+/** 任务收尾后查一次——刚烧完钱，此刻的数字最准。去抖压住连珠炮似的小任务。 */
+function pollBalanceAfterTask() {
+  if (Date.now() - lastBalanceAt < BALANCE_TASK_DEBOUNCE_MS) return;
+  pollBalance("任务结束");
+}
+
+/** 启动打底。连不上就隔一会儿再试，别把第一次真实查询推到 10 分钟后。 */
+function primeBalance(tries = 0) {
+  if (pollBalance("启动打底") || tries >= 8) return;
+  window.setTimeout(() => primeBalance(tries + 1), BALANCE_PRIME_MS);
+}
+window.setTimeout(() => primeBalance(), BALANCE_PRIME_MS);
+window.setInterval(() => pollBalance("兜底轮询"), BALANCE_POLL_MS);
 
 // ---- 位置持久化 ----
 async function restorePosition() {
@@ -1411,6 +1631,13 @@ img.addEventListener("contextmenu", (e) => {
   openMenu(e.clientX, e.clientY);
 });
 
+menuDsh.addEventListener("click", () => {
+  closeMenu();
+  if (!dshUrl) return;
+  void invoke("open_url", { url: dshUrl })
+    .catch(() => showBubble("打不开 DSH 网页", 3000));
+});
+
 menuSettings.addEventListener("click", () => {
   closeMenu();
   void invoke("open_settings").catch(() => showBubble("打不开设置窗口", 3000));
@@ -1553,6 +1780,11 @@ function handleTest(m: any) {
       return;
     case "reset":
       burst = null;
+      // 挂起的余额提醒跟着一起清。留着的话它会一直占着「已有提醒在播」
+      // 那道闸，之后所有的余额提醒都被静默丢弃——而且不留任何痕迹。
+      pendingLow = null;
+      lowBalance = null;
+      lowGen++;
       st.longIdle = false;
       st.edge = null;
       setWorking(false);

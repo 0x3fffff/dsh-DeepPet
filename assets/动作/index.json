@@ -39,5 +39,9 @@
   {
     "id": "done",
     "pool": "announce"
+  },
+  {
+    "id": "low-balance",
+    "pool": "announce"
   }
 ]

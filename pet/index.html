@@ -13,6 +13,9 @@
       <video id="pet-video" muted playsinline></video>
       <video id="pet-video-b" muted playsinline></video>
       <div id="menu">
+        <!-- 「打开 DSH」要等网页把自己的地址报上来才亮：桌宠自己无从知道那个
+             地址，没报上来时留一个点了没反应的按钮比不显示更糟。 -->
+        <div class="menu-item" id="menu-dsh" hidden><span class="menu-icon">🌐</span>打开 DSH</div>
         <div class="menu-item" id="menu-settings"><span class="menu-icon">⚙</span>设置</div>
         <!-- 测试面板只在 DSH_PET_DEBUG 下露出：它是开发用的，社区版本的右键
              菜单不该有它。功能本身还在（Rust 的 open_test 命令和调试通道都在），

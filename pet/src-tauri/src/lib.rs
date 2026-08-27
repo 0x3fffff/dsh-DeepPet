@@ -91,6 +91,11 @@ fn default_sound() -> bool { true }
 fn default_pet_scale() -> f64 { 1.35 }
 fn default_bubble_scale() -> f64 { 1.2 }
 fn default_lines() -> bool { true }
+// 余额提醒默认开：这个功能的价值全在「不请自来」，默认关掉的话绝大多数人
+// 永远不会翻到设置里发现它，等于白做。没配 API Key 时查询静默失败，不会
+// 变成骚扰。5 元大约是几十万 token，够你把手头这件事做完再去充值。
+fn default_balance_alert() -> bool { true }
+fn default_balance_threshold() -> f64 { 5.0 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Settings {
@@ -109,6 +114,13 @@ struct Settings {
     /// 台词：关掉就回到纯信息播报（「『标题』完成」）。
     #[serde(default = "default_lines")]
     lines: bool,
+    /// 余额提醒总开关。
+    #[serde(default = "default_balance_alert")]
+    balance_alert: bool,
+    /// 低于这个数就提醒。**不带货币单位**——DeepSeek 的余额接口可能返回
+    /// CNY 也可能返回 USD，这里只跟返回值比数字，面板上因此也不写符号。
+    #[serde(default = "default_balance_threshold")]
+    balance_threshold: f64,
 }
 
 impl Default for Settings {
@@ -120,6 +132,8 @@ impl Default for Settings {
             pet_scale: default_pet_scale(),
             bubble_scale: default_bubble_scale(),
             lines: default_lines(),
+            balance_alert: default_balance_alert(),
+            balance_threshold: default_balance_threshold(),
         }
     }
 }
@@ -270,6 +284,43 @@ struct LastInputInfo {
 extern "system" {
     fn GetLastInputInfo(plii: *mut LastInputInfo) -> i32;
     fn GetTickCount() -> u32;
+}
+
+#[link(name = "shell32")]
+extern "system" {
+    fn ShellExecuteW(
+        hwnd: isize,
+        op: *const u16,
+        file: *const u16,
+        params: *const u16,
+        dir: *const u16,
+        show: i32,
+    ) -> isize;
+}
+
+/// 用系统默认浏览器打开一个地址。右键菜单的「打开 DSH」走它。
+///
+/// 地址不是我们自己造的：它由 DSH 网页把 location.origin 报给插件、插件再
+/// 转给桌宠。所以先卡死协议再交给 ShellExecute——ShellExecute 的语义是
+/// 「按系统注册表决定用什么打开」，喂进去一个 file: 或某个自定义协议就等于
+/// 让它去启动别的程序。只放行 http/https，别的一律拒绝。
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("只接受 http/https 地址".into());
+    }
+    if url.len() > 2048 || url.chars().any(|c| c.is_control()) {
+        return Err("地址不合法".into());
+    }
+    let file: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    let op: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+    // 开进程可能要好几秒（浏览器冷启动）。这是个同步命令，同步命令跑在主
+    // 线程上——在这儿等就是让整只桌宠僵住，这个项目已经为这件事付过一次
+    // 代价了。所以扔给一个线程，不等结果。
+    std::thread::spawn(move || unsafe {
+        ShellExecuteW(0, op.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), 1);
+    });
+    Ok(())
 }
 
 /// 全系统空闲毫秒数。取不到就报 0（当作刚有输入），宁可不睡也不误睡。
@@ -686,7 +737,7 @@ pub fn run() {
             get_init, set_hit, list_plugins, show_pet,
             get_settings, set_settings, open_settings, reset_position, quit_pet,
             system_idle_ms, open_test, pet_test, pet_trace, set_trace, size_limits, preview_size,
-            get_hit_debug, get_lines
+            get_hit_debug, get_lines, open_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

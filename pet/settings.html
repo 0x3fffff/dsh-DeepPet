@@ -53,6 +53,21 @@
       </section>
 
       <section>
+        <h2>余额提醒</h2>
+        <label class="check"><input type="checkbox" id="balanceAlert" /> 余额不足时提醒我</label>
+        <div class="row" id="balanceRow">
+          <label class="slider-label" for="balanceThreshold">低于</label>
+          <input type="number" id="balanceThreshold" min="0" max="9999" step="1" />
+          <span class="unit">时提醒</span>
+        </div>
+        <p class="hint">
+          按账户币种计，不带货币单位——DeepSeek 的余额接口可能返回人民币也可能返回美元，
+          这里只跟它返回的数字比。桌宠会在任务结束后和每 10 分钟查一次；提醒过一次就会
+          安静下来，直到你充值。双击桌宠可以随时手动查一次。
+        </p>
+      </section>
+
+      <section>
         <h2>操作</h2>
         <div class="row">
           <button id="resetPos">重置桌宠位置</button>

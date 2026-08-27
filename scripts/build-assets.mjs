@@ -36,7 +36,7 @@ const MANIFEST = [
   { dir: "立绘/表情", mode: "webp", align: "each" },
   { dir: "立绘/跑步", mode: "webp", align: "group" },
   { dir: "动作", mode: "copy" }, // WebM + 末帧静图 + index.json，由 build-animation.mjs 产出
-  { dir: "音效", mode: "copy", only: ["任务完成.mp3"] },
+  { dir: "音效", mode: "copy", only: ["任务完成.mp3", "余额快用光了.mp3"] },
 ];
 
 /** 散在 assets/ 根下、需要进运行时的单个文件。 */

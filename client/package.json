@@ -1,6 +1,6 @@
 {
   "name": "@0x3fffff/dsh-deep-pet-client",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -9,7 +9,8 @@
     },
     "./client": {
       "default": "./lib/client.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "dsh": {
     "client": {

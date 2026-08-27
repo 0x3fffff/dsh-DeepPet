@@ -27,6 +27,7 @@
 
     { "id": "edge-lean",    "file": "靠屏幕左边.mov", "pool": "edge",      "role": "intro", "hold": "last-frame" },
 
-    { "id": "done",         "file": "完成任务-rle.mov", "pool": "announce" }
+    { "id": "done",         "file": "完成任务-rle.mov", "pool": "announce" },
+    { "id": "low-balance",  "file": "余额快用光了.mov", "pool": "announce" }
   ]
 }

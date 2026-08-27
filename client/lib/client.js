@@ -1,10 +1,12 @@
 window.__ModuleLoader__.load({
-  id: "@0x3fffff/dsh-deep-pet-client",
+  id: "dsh-deep-pet-client",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     var React = require("react");
+
+    var inject = ["slots", "connection"];
 
     function PetLaunchButton(props) {
       return React.createElement(
@@ -19,21 +21,23 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      var slots = ctx.get("slots");
-      if (slots === undefined) return;
-      var connection = ctx.get("connection");
-      if (connection === undefined || connection.rpc === undefined) return;
-      var rpc = connection.rpc;
+      var rpc = ctx.get("connection").rpc;
+
+      // 把本页的地址报给插件，插件再转给桌宠——桌宠右键菜单的「打开 DSH」
+      // 需要它。桌宠自己无从知道这个地址：会合登记里只有插件 WS 服务的端口，
+      // 而网页服务是另一个。这里是整条链路上唯一天然知道答案的地方。
+      try {
+        rpc.call("/pet", "web-url", { url: window.location.origin }).catch(function () {});
+      } catch (err) { /* 报不上去就只是少一个菜单项，不该拖垮按钮 */ }
 
       var onLaunch = function () {
-        // 结果 { ok, value:{action} } 或 { ok:false, error }；按钮暂时只触发，不展示结果。
         return rpc.call("/pet", "launch", {}).catch(function (err) {
           return { ok: false, error: { message: String((err && err.message) || err) } };
         });
       };
 
-      slots.inject("sidebar.footer.action", function () {
-        return slots.register(
+      ctx.slots.inject("sidebar.footer.action", function () {
+        return ctx.slots.register(
           {
             name: "sidebar.footer.action",
             id: "deep-pet-launch",
@@ -47,6 +51,7 @@ window.__ModuleLoader__.load({
     }
 
     exports.apply = apply;
+    exports.inject = inject;
     return module.exports;
   },
 });
