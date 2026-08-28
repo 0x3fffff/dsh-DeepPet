@@ -218,6 +218,7 @@ function apply(ctx, config) {
         return;
       }
       if (msg.type === "balance") void sendBalance(ws, msg.auto === true);
+      if (msg.type === "shutdown") shutdownDsh();
     });
     ws.on("close", drop);
     ws.on("error", drop);
@@ -345,6 +346,36 @@ function apply(ctx, config) {
       streak: failStreak,
     });
   });
+
+  /**
+   * 关掉整个 DSH。桌宠设置里的「退出 DSH」最终落到这里。
+   *
+   * 杀**进程树**而不是只 process.exit()：DSH 底下挂着 bash/pwsh 会话、子
+   * agent 这些子进程，只退自己会把它们留成孤儿在后台跑，下次启动还会撞端口。
+   *
+   * 两道保险，因为这是个「按了就该真的关掉」的动作：
+   *   1. 延迟一点再 spawn 一个 detached 的 taskkill /T /F 杀整棵树——延迟是
+   *      为了让这次 WS 往返和日志先落地，不然你连「点了没反应还是点了就死」
+   *      都分不清；
+   *   2. 不管 taskkill 成没成，稍后 process.exit(0) 兜底。taskkill 可能因为
+   *      权限或路径问题起不来，那时候没有第二道就是「点了没反应」。
+   */
+  function shutdownDsh() {
+    log("[deep-pet] 收到退出请求，正在关闭 DSH");
+    setTimeout(() => {
+      try {
+        const taskkill = join(process.env.SystemRoot || "C:\Windows", "System32", "taskkill.exe");
+        const child = spawn(taskkill, ["/PID", String(process.pid), "/T", "/F"], {
+          detached: true,
+          stdio: "ignore",
+        });
+        child.unref();
+      } catch (err) {
+        warn(`[deep-pet] taskkill 启动失败：${err?.message ?? err}`);
+      }
+    }, 300);
+    setTimeout(() => process.exit(0), 1200);
+  }
 
   /**
    * DSH 网页的地址，供桌宠右键菜单的「打开 DSH」用。

@@ -91,6 +91,14 @@ button {
   cursor: pointer;
 }
 button:hover { background: #eef1f6; }
+/* 已武装的危险按钮：确认态要一眼看出来和刚才不是同一个按钮，否则「再点
+   一次」和「点错第二次」在视觉上没有区别。 */
+button.armed {
+  border-color: #d14343;
+  background: #d14343;
+  color: #fff;
+}
+button.armed:hover { background: #b93636; }
 button.danger { color: #b4232a; border-color: #e3bfc1; }
 button.danger:hover { background: #fdeced; }
 

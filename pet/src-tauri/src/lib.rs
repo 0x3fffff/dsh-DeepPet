@@ -270,6 +270,34 @@ fn reset_position(app: tauri::AppHandle) {
     let _ = app.emit("reset-position", ());
 }
 
+/// 桌宠是否正在「工作中」。
+///
+/// 设置窗口和桌宠窗口是两个 webview，工作态只有桌宠那边知道；而「退出 DSH」
+/// 的二次确认文案要用它——正在跑任务时退出，代价和空闲时退出完全不是一回事。
+/// 桌宠每次切换工作态往这儿写一次，设置窗口读。
+static WORKING: Mutex<bool> = Mutex::new(false);
+
+#[tauri::command]
+fn set_working(active: bool) {
+    if let Ok(mut w) = WORKING.lock() {
+        *w = active;
+    }
+}
+
+#[tauri::command]
+fn is_working() -> bool {
+    WORKING.lock().map(|w| *w).unwrap_or(false)
+}
+
+/// 请求退出 DSH。
+///
+/// 这里只发个事件：真正的关闭要由**插件**在 DSH 宿主进程里执行（杀进程树），
+/// 桌宠自己没那个位置。桌宠窗口收到事件后经 WS 把请求转给插件。
+#[tauri::command]
+fn request_dsh_shutdown(app: tauri::AppHandle) {
+    let _ = app.emit("dsh-shutdown", ());
+}
+
 // ---- 系统级空闲 ----
 // 「长时间无操作」用的是**全系统**最后一次输入到现在的时长，而不是「有没有
 // 碰过桌宠」——「打瞌睡 / 玩手机」的潜台词是主人不在。只看桌宠的话，你在
@@ -737,7 +765,8 @@ pub fn run() {
             get_init, set_hit, list_plugins, show_pet,
             get_settings, set_settings, open_settings, reset_position, quit_pet,
             system_idle_ms, open_test, pet_test, pet_trace, set_trace, size_limits, preview_size,
-            get_hit_debug, get_lines, open_url
+            get_hit_debug, get_lines, open_url,
+            set_working, is_working, request_dsh_shutdown
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -172,6 +172,31 @@ try {
   push("重新武装后再跌破可以再报", (await layout()).action === "low-balance");
   await sleep(8200);
 
+  // ---- 音效真的响了没有 ----
+  //
+  // 这一条是补上来的：原来整个文件都跑在 sound:false 下（图安静），于是
+  // 「音效」这半从没被验证过，而它恰恰坏了——自动播放解锁自己的 pause()
+  // 会把刚起的播放掐掉，全程不报错。
+  //
+  // 判据用 currentTime 前进而不是 !paused：paused 为 false 只说明「请求了
+  // 播放」，被策略拦下时它照样是 false；currentTime 动了才是真的在出声。
+  await reset();
+  await ask(ws, { type: "debug-settings", set: { ...base, sound: true } }, "settings");
+  await sleep(400);
+  await feed(2.2);
+  await sleep(1500);
+  {
+    const l = await layout();
+    const a = l.audio?.low;
+    push(`余额提醒的音频元素已创建（${JSON.stringify(a && a.src)}）`, !!a, l.audio);
+    push("音频没有加载错误", !a || a.error === null, a);
+    push(`音效真的在播（currentTime=${a?.currentTime}，paused=${a?.paused}）`,
+      !!a && a.paused === false && a.currentTime > 0, a);
+  }
+  await sleep(7000); // 让 8 秒那段播完，别和后面的用例串味
+  await ask(ws, { type: "debug-settings", set: base }, "settings");
+  await sleep(300);
+
   // ---- 工作中：只出气泡，不停下来演 ----
   await reset();
   drive({ cmd: "working", active: true });
@@ -198,6 +223,24 @@ try {
     const l = await layout();
     push("关掉开关后不播动画", l.action !== "low-balance", l.action);
     push("关掉开关后不弹气泡", !l.bubbleShown, l.bubbleText);
+  }
+
+  // ---- 退出 DSH 的消息真的发得出去 ----
+  //
+  // 静态断言只能证明代码里写着这几行，证不了跨三个进程边界之后消息还在。
+  // 走的是设置窗口点下去之后的同一个函数；这里的 mock 服务器只记录不执行，
+  // 所以没有任何东西会被杀掉。
+  {
+    const got = new Promise((resolve) => {
+      const on = (raw) => {
+        let m; try { m = JSON.parse(String(raw)); } catch { return; }
+        if (m.type === "shutdown") { ws.off("message", on); resolve(true); }
+      };
+      ws.on("message", on);
+      setTimeout(() => { ws.off("message", on); resolve(false); }, 4000);
+    });
+    ws.send(JSON.stringify({ type: "debug-shutdown" }));
+    push("退出 DSH 的 shutdown 消息真的发到了插件", (await got) === true);
   }
 
   // ---- 关掉台词：退回一行纯信息 ----

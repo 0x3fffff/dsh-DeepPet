@@ -6,7 +6,7 @@
   "scripts": {
     "check-versions": "node scripts/check-versions.mjs",
     "stage": "node scripts/stage-binary.mjs",
-    "test": "node scripts/check-versions.mjs && node test/contract.mjs && node test/redact.mjs && node test/bubble-layout.mjs && node test/balance-alert.mjs && node test/video-ready.mjs && node test/settings-shape.mjs && node test/framing.mjs && node test/lines.mjs && node test/menu.mjs && node test/open-url.mjs && node test/client-pkg.mjs && node test/patch.mjs && node test/plugin-smoke.mjs && node test/handshake.mjs",
+    "test": "node scripts/check-versions.mjs && node test/contract.mjs && node test/redact.mjs && node test/bubble-layout.mjs && node test/balance-alert.mjs && node test/video-ready.mjs && node test/settings-shape.mjs && node test/framing.mjs && node test/lines.mjs && node test/menu.mjs && node test/open-url.mjs && node test/shutdown.mjs && node test/client-pkg.mjs && node test/patch.mjs && node test/plugin-smoke.mjs && node test/handshake.mjs",
     "test:integration": "node test/integration-smoke.mjs",
     "test:clickthrough": "node test/clickthrough.mjs",
     "test:orphan": "node test/orphan.mjs",

@@ -568,15 +568,38 @@ function showBubble(text: string, ms: number, sub?: string) {
   bubbleTimer = window.setTimeout(() => bubble.classList.remove("show"), ms);
 }
 
+/**
+ * 正在做自动播放解锁的元素。
+ *
+ * 解锁的手法是 play() 之后立刻 pause()，而那次 pause **必须不能掐掉一次
+ * 真正的播放请求**。余额提醒踩的就是这个：它是唯一一条「没人碰过桌宠也要
+ * 自己响」的音效，于是解锁和播放撞进同一个 tick——解锁的 .then(pause) 排在
+ * 我们的 play() 后面执行，把刚起的声音掐死，全程不报错，表现就是「没声音」。
+ * readyState 是 4、error 是 null、paused 是 true、currentTime 停在 0。
+ */
+const priming = new WeakSet<HTMLAudioElement>();
+
+function primeAudio(a: HTMLAudioElement) {
+  priming.add(a);
+  // 静音解锁：不静音的话，第一次碰桌宠会听见半个 tick 的警报声。
+  a.muted = true;
+  a.play()
+    .then(() => {
+      if (!priming.has(a)) return; // 期间有人真的要放它，别掐
+      a.pause();
+      a.currentTime = 0;
+    })
+    .catch(() => {})
+    .finally(() => { priming.delete(a); a.muted = false; });
+}
+
 function ensureAudio() {
   if (audio) return;
   audio = new Audio(AUDIO);
   lowAudio = new Audio(LOW_BALANCE_AUDIO);
   // 借首次用户手势解锁自动播放。**两条都要解锁**：余额提醒是唯一一条
   // 没人点过就要自己响的音效，漏掉它就等于它永远不响，而且不报错。
-  for (const a of [audio, lowAudio]) {
-    a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
-  }
+  for (const a of [audio, lowAudio]) primeAudio(a);
 }
 
 /** 按名字放，**不能传元素**：首次调用时元素还是 undefined，实参会在
@@ -585,10 +608,28 @@ function playSound(which: "done" | "low") {
   if (!settings.sound) return;
   ensureAudio();
   const a = which === "done" ? audio : lowAudio;
-  if (a) { a.currentTime = 0; a.play().catch(() => {}); }
+  if (!a) return;
+  // 向解锁那一路声明：这一次是真的要放，你的 pause 不许掐。顺序要紧——
+  // 必须在 play() 之前，因为解锁的 .then() 可能在下一个微任务就跑到。
+  priming.delete(a);
+  a.muted = false;
+  a.currentTime = 0;
+  a.play().catch(() => {});
 }
 
 function playDone() { playSound("done"); }
+
+/** 供调试通道读的音频快照。没创建就报 null，好区分「没建」和「建了没响」。 */
+function audioState(a: HTMLAudioElement | undefined) {
+  if (!a) return null;
+  return {
+    paused: a.paused,
+    currentTime: Number(a.currentTime.toFixed(3)),
+    readyState: a.readyState,
+    error: a.error ? a.error.code : null,
+    src: (a.currentSrc || a.src || "").split("/").pop() ?? "",
+  };
+}
 
 /**
  * 一轮播报。并发完成时不排队而是合并——排队会让桌宠播报几十秒前的状态，
@@ -913,6 +954,9 @@ function scheduleLongLine() {
 let workingDebounce: number | undefined;
 
 function setWorking(active: boolean) {
+  // 设置窗口是另一个 webview，读不到这里的状态。「退出 DSH」的二次确认要
+  // 用它——正在跑任务时退出和空闲时退出，代价不是一回事。
+  void invoke("set_working", { active }).catch(() => {});
   if (workingDebounce !== undefined) { window.clearTimeout(workingDebounce); workingDebounce = undefined; }
   if (active === st.working) return;
   if (active) {
@@ -1158,6 +1202,13 @@ function handleMessage(msg: any, link: Link) {
       // 气泡的实测尺寸。「断成两行」这件事只能靠量高度看出来——单行是
       // 字号×1.5 加上下内边距，两行就多一整行。
       bubbleW: bubble.offsetWidth, bubbleH: bubble.offsetHeight,
+      // 音频的真实状态。「响没响」这件事光看代码路径看不出来——自动播放
+      // 策略、解锁时机、以及解锁自己的 pause 都可能把它掐掉，而且全都不报错。
+      audio: {
+        done: audioState(audio),
+        low: audioState(lowAudio),
+        sound: settings.sound,
+      },
       // 气泡此刻**可见吗**。bubbleText 读的是 DOM，气泡收起来之后文字还在，
       // 光看它没法分辨「还挂着」和「早收了」——而余额提醒把气泡延长到 8 秒
       // 这件事，恰恰只能靠这个区分。
@@ -1230,6 +1281,13 @@ function handleMessage(msg: any, link: Link) {
           },
         }));
       }
+    }
+  } else if (debugMode && msg.type === "debug-shutdown") {
+    // 走的是设置窗口点下去之后的**同一个函数**，不是旁路。插件那边收到
+    // shutdown 才会真的杀进程；测试用的 mock 服务器只记录，不会有人死。
+    const sent = requestDshShutdown();
+    for (const l of links.values()) {
+      if (l.open) l.ws.send(JSON.stringify({ type: "debug-info", shutdown: { sent } }));
     }
   } else if (debugMode && msg.type === "debug-reset-balance") {
     balanceStates.clear();
@@ -1776,6 +1834,26 @@ function handleTest(m: any) {
       return;
   }
 }
+
+/**
+ * 把「退出 DSH」转给插件。
+ *
+ * 发给**所有**打开的连接，而不是像查余额那样只发第一条：一只桌宠可能挂在
+ * 多个 profile 上，每个都是一个独立的 DSH 进程。只关其中随机一个，比全关
+ * 更让人摸不着头脑。
+ */
+function requestDshShutdown() {
+  let sent = 0;
+  for (const link of links.values()) {
+    if (!link.open) continue;
+    try { link.ws.send(JSON.stringify({ type: "shutdown" })); sent++; } catch {}
+  }
+  trace("shutdown", "", "", sent ? `已发往 ${sent} 条连接` : "无可用连接");
+  if (!sent) showBubble("桌宠未连接 DSH", 3000);
+  return sent;
+}
+
+void listen("dsh-shutdown", () => { requestDshShutdown(); });
 
 void listen<boolean>("trace-enabled", (e) => { traceOn = !!e.payload; });
 void listen<any>("pet-test", (e) => { handleTest(e.payload); });

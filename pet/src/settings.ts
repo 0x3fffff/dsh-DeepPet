@@ -168,6 +168,50 @@ document.getElementById("quit")!.addEventListener("click", async () => {
   await invoke("quit_pet").catch(() => {});
 });
 
+// ---- 退出 DSH ----
+//
+// 就地二次确认，不弹系统对话框：这个按钮紧挨着「退出桌宠」，两者后果差一个
+// 量级——退出桌宠可以重开，退出 DSH 会把正在跑的 agent 任务一起杀掉。点错
+// 一次就是一次任务丢了。
+//
+// 确认态几秒后自动退回，免得它一直挂着「危险」的样子，下次误点直接就执行了。
+const quitDshEl = document.getElementById("quitDsh") as HTMLButtonElement;
+const QUIT_DSH_LABEL = quitDshEl.textContent ?? "退出 DSH";
+const CONFIRM_WINDOW_MS = 5000;
+let quitArmed = false;
+let quitTimer: number | undefined;
+
+function disarmQuitDsh() {
+  quitArmed = false;
+  if (quitTimer !== undefined) { window.clearTimeout(quitTimer); quitTimer = undefined; }
+  quitDshEl.textContent = QUIT_DSH_LABEL;
+  quitDshEl.classList.remove("armed");
+}
+
+quitDshEl.addEventListener("click", async () => {
+  if (!quitArmed) {
+    quitArmed = true;
+    // 工作态只有桌宠窗口知道，经 Rust 转一手。拿不到就按「不确定」处理，
+    // 用不带任务字样的措辞——宁可说得轻，也别谎称「没有任务在跑」。
+    let busy = false;
+    try { busy = await invoke<boolean>("is_working"); } catch {}
+    quitDshEl.textContent = busy ? "有任务在跑，确认退出？" : "再点一次确认退出";
+    quitDshEl.classList.add("armed");
+    quitTimer = window.setTimeout(disarmQuitDsh, CONFIRM_WINDOW_MS);
+    return;
+  }
+  disarmQuitDsh();
+  try {
+    await invoke("request_dsh_shutdown");
+    note("已请求退出 DSH");
+  } catch (err) {
+    note(`退出失败：${String(err)}`);
+  }
+});
+
+// 面板失焦时撤销确认态：切走再切回来时那个「再点一次」不该还举着。
+window.addEventListener("blur", disarmQuitDsh);
+
 async function init() {
   try {
     settings = await invoke<Settings>("get_settings");
