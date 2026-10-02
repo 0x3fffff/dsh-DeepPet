@@ -1,5 +1,6 @@
 // 协议版本握手回归测试：桌宠连上后必须报版本，插件对不兼容要出声。
 // 用法：node test/handshake.mjs
+import "./_isolate.mjs"; // 必须在 plugin 之前：隔离会合目录，免被真机桌宠串味
 import { WebSocket } from "ws";
 import { createRequire } from "node:module";
 import { apply } from "../plugin/lib/index.js";

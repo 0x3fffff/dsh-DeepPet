@@ -2,6 +2,7 @@
 // 注意：这里的 mock 是照着代码的期望造的，只能测「代码自洽」。
 // 「代码与 DSH 的真实契约一致」由 test/contract.mjs 负责。
 // 用法：node test/plugin-smoke.mjs
+import "./_isolate.mjs"; // 必须在 plugin 之前：隔离会合目录，免被真机桌宠串味
 import { WebSocket } from "ws";
 import { apply } from "../plugin/lib/index.js";
 

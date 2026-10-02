@@ -49,6 +49,35 @@ dsh plugin --profile <你的-profile> add @0x3fffff/dsh-deep-pet
 7. **用户在国内、npm 配了 npmmirror 镜像时**，加 `--registry=https://registry.npmjs.org`。
    镜像同步滞后会让 `^x.y.z` 落回旧版，装上之后表现是「新功能不存在」而不是报错。
 
+### DSH 版本要求
+
+本插件支持 **DSH 0.1.x 与 0.2.x**（peer 范围同时覆盖两代）。
+
+⚠️ **0.2 起有个静默跳过陷阱，值得单独说清楚**：DSH 0.2 的 `dsh-app-boot` 在组合
+profile 时，会拿 bundle 声明的 `@deepseek-ai/dsh-*` peer 去比当前运行时版本；
+只要有一条不满足，就把**整个 bundle 跳过**（丢进 `skippedBundles`）——
+**不报错、不加载、桌宠不出现**，而 DSH 自己照常启动。从外面看和「装坏了」完全
+一样；原因只写在该进程的 stderr 上，GUI 启动时看不到。旧写的 peer 范围是
+`^0.1.x`，而 semver 里 `^0.1.1-rc.1` 的上界是 `<0.2.0-0`，正好把 `0.2.0-rc.2`
+排除掉，于是桌面版（0.2.0-rc.2）上必然踩中。
+
+**0.3.4 起 peer 已含 `^0.2.0-rc.1`，正常安装不会再撞上。** 若你装的还是
+**0.3.3 或更早**、又想跑在 DSH 0.2.x 上，需手动放行一次，二选一：
+
+- 在 DSH 的插件管理器里对该插件点「允许版本」（等价 `dsh plugin allow-version`）；
+- 或写 profile 的 `compatibility.json`
+  （`~/.dsh/profiles/<profile>/compatibility.json`，重启 DSH 生效）：
+
+  ```json
+  {
+    "@0x3fffff/dsh-deep-pet@0.3.3": ["0.2.0-rc.2"],
+    "@0x3fffff/dsh-deep-pet-client@0.3.3": ["0.2.0-rc.2"]
+  }
+  ```
+
+  两边都要写：host 包是 profile 直接加载的 bundle，网页端那半由 bundle 的 patch
+  插进来，各自独立判定。键和值都必须是**精确版本**，不支持范围。
+
 ## 它会做什么
 
 - **拖动**：按下并左右拖动时播放 8 帧跑步动画，水平方向决定朝向（左=原帧朝左，右=水平镜像朝右；纯垂直拖动按朝左），松手停在原地并记住位置。
