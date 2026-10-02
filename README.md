@@ -3,8 +3,9 @@
 一个支持 DeepSeek Harness（DSH）网页版和桌面端的桌宠插件（Windows x64）。一个无边框、透明、置顶的小窗口，
 在你跑任务时打字、完成时庆祝、出错时垮脸，闲着会自己找乐子。
 
-![桌宠](https://img.cdn1.vip/i/6a8c5d86ac643_1787583878.webp)
-
+![桌宠](https://roco.pet/temp/1.png)
+![桌宠](https://roco.pet/temp/2.png)
+![桌宠](https://roco.pet/temp/3.png)
 ## 安装
 
 最省事的办法——直接跟 DSH 说：
