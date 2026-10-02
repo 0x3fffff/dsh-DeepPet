@@ -34,9 +34,33 @@ push("index.html 里有 menu-dsh 这一项", html.includes('id="menu-dsh"'), nul
   // 默认藏着：地址还没报上来时，一个点了没反应的菜单项比没有更糟。
   push("默认带 hidden 属性", /\bhidden\b/.test(line), line);
 }
-push("只有收到合法地址才放出来",
-  /menuDsh\.hidden\s*=\s*false/.test(mainTs)
-  && (mainTs.match(/menuDsh\.hidden\s*=\s*false/g) ?? []).length === 1, null);
+push("菜单只使用仍连接的网页服务", mainTs.includes('link.open && link.webUrl') && mainTs.includes('menuDsh.hidden = !dshUrl'), null);
+push("断连时重新计算菜单", /links.delete\(url\);\s*refreshDshMenu\(\)/.test(mainTs), null);
+push("网页服务卸载会撤销地址", pluginJs.includes('return () => { setWebUrl(""); };'), null);
+
+// Exercise the actual menu selector with mixed desktop/web connections.
+{
+  const links = new Map();
+  const menuDsh = { hidden: false };
+  let dshUrl = "";
+  const body = /function refreshDshMenu\(\) \{([\s\S]*?)\n\}/.exec(mainTs)?.[1];
+  const refresh = new Function("links", "menuDsh", `${body}; return dshUrl;`);
+  const desktop = { open: true, webUrl: "" };
+  const web = { open: true, webUrl: "http://127.0.0.1:3080" };
+  links.set("desktop", desktop);
+  dshUrl = refresh(links, menuDsh);
+  push("仅桌面端：隐藏入口", menuDsh.hidden && !dshUrl, null);
+  links.set("web", web);
+  dshUrl = refresh(links, menuDsh);
+  push("网页版在线：显示有效入口", !menuDsh.hidden && dshUrl === web.webUrl, null);
+  web.open = false;
+  dshUrl = refresh(links, menuDsh);
+  push("网页版断开而桌面端仍在线：隐藏入口", menuDsh.hidden && !dshUrl, null);
+  web.open = true;
+  web.webUrl = "";
+  dshUrl = refresh(links, menuDsh);
+  push("网页服务停止：隐藏入口", menuDsh.hidden && !dshUrl, null);
+}
 
 // ---- 四个环节 ----
 // 地址来源：webServer 服务，不是网页。

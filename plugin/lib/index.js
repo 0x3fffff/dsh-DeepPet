@@ -390,7 +390,7 @@ function apply(ctx, config) {
   let webUrl = "";
 
   function setWebUrl(url) {
-    if (typeof url !== "string" || !/^https?:\/\//.test(url) || url.length > 2048) return;
+    if (typeof url !== "string" || (url !== "" && !/^https?:\/\//.test(url)) || url.length > 2048) return;
     if (url === webUrl) return;
     webUrl = url;
     broadcast({ type: "web-url", url: webUrl });
@@ -405,6 +405,7 @@ function apply(ctx, config) {
     if (!Number.isInteger(port) || port <= 0) return;
     const host = ws.host === "0.0.0.0" ? "127.0.0.1" : (ws.host || "127.0.0.1");
     setWebUrl(`http://${host}:${port}`);
+    return () => { setWebUrl(""); };
   });
 
   /**

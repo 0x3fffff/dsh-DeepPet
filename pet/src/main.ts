@@ -1062,6 +1062,7 @@ interface Link {
   /** 这个插件自己报的工作态。多 profile 下取或——否则 A 的任务开始会被
       B 的任务结束抹掉。 */
   working: boolean;
+  webUrl: string;
 }
 
 /** 按 url 索引：登记文件和 DSH_PET_WS_URL 可能指向同一个插件，去重靠它。 */
@@ -1083,8 +1084,13 @@ let pollTimer: number | undefined;
 let debugMode = false;
 let selfVersion = "";
 let envUrl = "";
-/** DSH 网页地址，由网页端经插件报上来。空的时候右键菜单里没有「打开 DSH」。 */
+/** DSH 网页地址，由网页服务经插件报上来。空的时候右键菜单里没有「打开 DSH」。 */
 let dshUrl = "";
+
+function refreshDshMenu() {
+  dshUrl = [...links.values()].find((link) => link.open && link.webUrl)?.webUrl ?? "";
+  menuDsh.hidden = !dshUrl;
+}
 
 function applyLayout(info: InitInfo) {
   for (const el of [img, ...videos]) {
@@ -1160,13 +1166,9 @@ function handleMessage(msg: any, link: Link) {
   } else if (msg.type === "balance" || msg.type === "balance-error") {
     onBalance(msg, link);
   } else if (msg.type === "web-url") {
-    // DSH 网页把自己的 location.origin 报上来了（网页 → 插件 RPC → 这里）。
-    // 协议在网页端、插件端、Rust 端各卡一道——这个串最终会喂给 ShellExecute。
     const url = String(msg.url ?? "");
-    if (/^https?:\/\//.test(url) && url.length <= 2048) {
-      dshUrl = url;
-      menuDsh.hidden = false;
-    }
+    link.webUrl = /^https?:\/\//.test(url) && url.length <= 2048 ? url : "";
+    refreshDshMenu();
   } else if (msg.type === "reset-position") {
     // 网页按钮「已启动→重置位置」：清掉记住的位置，回到默认右下角。
     try { localStorage.removeItem(POS_KEY); } catch {}
@@ -1309,7 +1311,7 @@ function handleMessage(msg: any, link: Link) {
 function connect(url: string, label: string) {
   let ws: WebSocket;
   try { ws = new WebSocket(url); } catch { return; }
-  const link: Link = { ws, label, open: false, working: false };
+  const link: Link = { ws, label, open: false, working: false, webUrl: "" };
   links.set(url, link);
   ws.onopen = () => {
     link.open = true;
@@ -1328,6 +1330,7 @@ function connect(url: string, label: string) {
   };
   ws.onclose = () => {
     links.delete(url);
+    refreshDshMenu();
     // 插件断开时撤销它的工作态，否则桌宠会永远卡在打字。
     setWorking(anyWorking());
     // 连不上就退避：1.5s 起，每次翻倍，封顶 12s。
@@ -1366,6 +1369,7 @@ async function poll() {
     connect(url, label);
   }
 
+  refreshDshMenu();
   const open = openCount();
   if (open > 0) {
     offlineSince = now;
